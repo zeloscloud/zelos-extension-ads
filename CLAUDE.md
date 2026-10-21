@@ -18,7 +18,7 @@ just sim          # demo PLC behind AMS/TCP on 127.0.0.1:48898
 | Path | Role |
 |------|------|
 | `main.py` | Click entry point; re-exports `ACTION_PREFIX` |
-| `zelos_extension_ads/__init__.py` | `ACTION_PREFIX = "Beckhoff ADS"` - must match `name` in `extension.toml` |
+| `zelos_extension_ads/__init__.py` | `ACTION_PREFIX = "ADS"` - must match `name` in `extension.toml` |
 | `zelos_extension_ads/ams.py` | NetIds, router-less vs native router, the one local NetId per process, UDP 48899 identify; add route through pyads |
 | `zelos_extension_ads/symbols.py` | Symbol / datatype upload parsing, flattening, trace names, values, `SymbolFilter`, `SymbolMap`, `layout` |
 | `zelos_extension_ads/transport.py` | `Link` protocol, `PyadsLink` (pyads), error classes (`is_connection_error`, `needs_resync`) |

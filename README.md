@@ -121,8 +121,8 @@ Event keys become trace events, symbols their fields. Types and addresses come f
 With several targets, pass `target` to pick one.
 
 ```bash
-zelos actions execute "Beckhoff ADS/read_symbol" --params '{"symbol":"MAIN.nCycle","target":"plc1"}'
-zelos actions execute "Beckhoff ADS/add_route" --params '{"host":"192.168.1.10","username":"Administrator","password":"..."}'
+zelos actions execute ADS/read_symbol --params '{"symbol":"MAIN.nCycle","target":"plc1"}'
+zelos actions execute ADS/add_route --params '{"host":"192.168.1.10","username":"Administrator","password":"..."}'
 ```
 
 A password on the command line lands in the shell history; prefer the action form in the app.

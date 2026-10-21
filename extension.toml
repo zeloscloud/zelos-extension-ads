@@ -1,7 +1,7 @@
 # Zelos Extension Manifest
 # See https://docs.zeloscloud.io/sdk/how-to/develop-extensions/ for full documentation
 
-name = "Beckhoff ADS"
+name = "ADS"
 version = "0.1.0"
 description = "Beckhoff TwinCAT ADS extension for Zelos: trace PLC variables by notification or polling, read and write symbols"
 author = "Zelos Cloud"

@@ -4,7 +4,7 @@
   "title": "Beckhoff ADS Configuration",
   "description": "Configure TwinCAT targets and how their PLC variables are traced",
   "ui:options": {
-    "autoconfig": "Beckhoff ADS/auto_config"
+    "autoconfig": "ADS/auto_config"
   },
   "properties": {
     "targets": {

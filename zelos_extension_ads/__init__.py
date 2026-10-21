@@ -17,7 +17,7 @@ from zelos_extension_ads.symbols import Field, SymbolMap
 #:
 #: Matches `name` in `extension.toml`, which is what a user sees in the
 #: extension list, so the address they read there is the address they type.
-ACTION_PREFIX = "Beckhoff ADS"
+ACTION_PREFIX = "ADS"
 
 __all__ = [
     "ACTION_PREFIX",
