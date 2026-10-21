@@ -20,6 +20,7 @@ from functools import partial
 from typing import Any
 
 import zelos_sdk
+from pyads.pyads_ex import ADSError
 from zelos_sdk import schemas
 from zelos_sdk.hooks.logging import TraceLoggingHandler
 
@@ -856,23 +857,21 @@ class ADSClient:
         return sym.decode(data, f.data_type)
 
     async def write_value(self, f: Field, value: Any) -> Any:
-        """Write `value` and read it back; refused when the symbol version moved."""
+        """Write `value` by symbol handle (the target resolves the name) and read it back."""
         data = sym.encode(value, f.data_type, f.size)
         link = self._require_link()
         try:
-            raw = await self._call(self._write_checked, link, f, data)
-        except StaleTableError:
-            self._resync, self._connected = STALE_TABLE, False
+            raw = await self._call(link.write_by_name, f.symbol, data)
+        except ADSError as e:
+            if needs_resync(e):
+                self._resync, self._connected = STALE_TABLE, False
+            if e.err_code == 1808:
+                raise ValueError(
+                    f"Symbol '{f.symbol}' is not on target '{self.name}' any more (ADS 1808); "
+                    "the program changed, retry after the upload"
+                ) from e
             raise
         return sym.decode(raw, f.data_type)
-
-    def _write_checked(self, link: Link, f: Field, data: bytes) -> bytes:
-        """Worker thread: version check (on a target that has one), write and read-back
-        with no other request between."""
-        if self._version is not None and self._changed(self._read_version()):
-            raise StaleTableError(f"{STALE_TABLE} on '{self.name}'; write refused, retry")
-        link.write(f.index_group, f.index_offset, data)
-        return link.read(f.index_group, f.index_offset, f.size)
 
     async def read_state(self) -> dict[str, Any]:
         self.plc_state = await self._call(self._require_link().read_state)

@@ -80,22 +80,21 @@ async def test_symbol_map_names_and_scales():
 
 
 async def test_poll_resyncs_on_symbol_version_change(caplog):
-    """Polled addresses go stale silently: a write checks 0xF008 first and is refused,
-    the client uploads the table again, then the write goes through."""
+    """Polled addresses go stale silently: a write after an online change that moved
+    the variable still lands on it (by handle, resolved on the target); the health
+    probe then sees 0xF008 moved and the client uploads again."""
     plc = DemoPlc()
     client = demo_client(plc, transport="poll")
     async with running(client):
         await wait_until(lambda: client._poll_count >= 2, 10.0)
         f = client.field("MAIN.bOut1")
-        plc.online_change()
-        with pytest.raises(RuntimeError, match="symbol table changed"):
-            await client.write_value(f, True)
-        assert plc.read(f.index_group, f.index_offset, 1) == b"\0"
-        with pytest.raises(RuntimeError, match="symbol table changed"):
-            await client.read_value(f)
-        await wait_until(lambda: "main.nadded" in client._uploaded, 10.0)
+        plc.online_change()  # bOut0 now sits at bOut1's old address
+        assert await client.write_value(f, True) is True
+        assert plc.vars["MAIN.bOut1"].data == b"\1" and plc.vars["MAIN.bOut0"].data == b"\0"
+        assert not plc._handles
+        await wait_until(lambda: "main.bout0" in client._uploaded, 10.0)
         assert client._connected and client._version == plc.read(ADSIGRP_SYM_VERSION, 0, 1)
-        assert await client.write_value(client.field("MAIN.bOut1"), True) is True
+        assert client.field("MAIN.bOut1").index_offset == f.index_offset + 1
         await client.write_value(client.field("MAIN.bOut1"), False)
     assert "symbol table changed; uploading the symbol table again" in caplog.text
 
@@ -172,6 +171,7 @@ async def test_wire_notifications_and_write(server: DemoServer):
         assert await client.write_value(f, True) is True
         assert struct.unpack("<?", server.plc.read(f.index_group, f.index_offset, 1))[0]
         await client.write_value(f, False)
+        assert not server.plc._handles  # the write's symbol handle was released
         assert server.requests > 20
     # A clean close deleted every notification on the target.
     assert not server.plc._subs

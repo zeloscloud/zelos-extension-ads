@@ -23,6 +23,9 @@ from pyads.structs import SAdsSumRequest
 logger = logging.getLogger(__name__)
 
 # ADS index groups.
+ADSIGRP_SYM_HNDBYNAME = 0xF003  # name -> handle
+ADSIGRP_SYM_VALBYHND = 0xF005  # value by handle (index offset)
+ADSIGRP_SYM_RELEASEHND = 0xF006
 ADSIGRP_SYM_VERSION = 0xF008  # one byte TwinCAT bumps per online change
 ADSIGRP_SYM_UPLOAD = 0xF00B
 ADSIGRP_SYM_DT_UPLOAD = 0xF00E
@@ -48,6 +51,7 @@ class Link(Protocol):
     def upload(self) -> tuple[bytes, bytes]: ...
     def read(self, group: int, offset: int, size: int) -> bytes: ...
     def write(self, group: int, offset: int, data: bytes) -> None: ...
+    def write_by_name(self, name: str, data: bytes) -> bytes: ...
     def sum_read(self, items: Sequence[tuple[int, int, int]]) -> list[bytes | int]: ...
     def subscribe(
         self, group: int, offset: int, size: int, cycle_ms: int, callback: NotifyCallback
@@ -121,6 +125,24 @@ class PyadsLink:
 
     def write(self, group: int, offset: int, data: bytes) -> None:
         self._require().write(group, offset, data, ctypes.c_ubyte * len(data))
+
+    def write_by_name(self, name: str, data: bytes) -> bytes:
+        """Write through a symbol handle and read back through the same one: the
+        target resolves `name` now, whatever the uploaded table says.
+
+        pyads's handle-less `write_by_name` leaks the handle when the write raises;
+        this holds it in a `finally`.
+        """
+        plc = self._require()
+        buf = ctypes.c_ubyte * len(data)
+        handle = plc.get_handle(name)
+        try:
+            plc.write_by_name("", data, buf, handle=handle)
+            return bytes(
+                plc.read_by_name("", buf, return_ctypes=True, handle=handle, check_length=False)
+            )
+        finally:
+            plc.release_handle(handle)
 
     def upload(self) -> tuple[bytes, bytes]:
         info = self.read(ADSIGRP_SYM_UPLOADINFO2, 0, 24)

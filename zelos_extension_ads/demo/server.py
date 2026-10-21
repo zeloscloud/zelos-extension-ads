@@ -21,6 +21,7 @@ from zelos_extension_ads.demo.plc import DEMO_HOST, DEMO_NET_ID, DEMO_PORT, Demo
 from zelos_extension_ads.transport import (
     ADSIGRP_SUMUP_READ,
     ADSIGRP_SYM_DT_UPLOAD,
+    ADSIGRP_SYM_HNDBYNAME,
     ADSIGRP_SYM_UPLOAD,
     ADSIGRP_SYM_UPLOADINFO2,
     FILETIME_EPOCH,
@@ -150,6 +151,9 @@ class DemoServer:
                     for r, item in zip(results, items, strict=True)
                 )
                 return struct.pack("<I", len(value)) + value
+            if group == ADSIGRP_SYM_HNDBYNAME:
+                handle = plc.get_handle(payload.split(b"\0", 1)[0].decode())
+                return struct.pack("<II", 4, handle)
             value = self._read(group, offset, read_size)
             return struct.pack("<I", len(value)) + value
         if cmd == ADD_NOTIFICATION:

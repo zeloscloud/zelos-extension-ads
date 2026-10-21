@@ -48,18 +48,18 @@ just sim          # demo PLC behind AMS/TCP on 127.0.0.1:48898
 
 - pyads blocks: every link call runs on the client's one worker thread (`_call`); notifications arrive on AdsLib's thread and are queued, then flushed on the loop after `FLUSH_SECONDS` into one row per (event, PLC timestamp).
 - Per connect: `_open` (resolve the target NetId by UDP identify when empty, open, ReadState, device info) -> upload both tables -> `flatten` -> map or filters -> `layout` -> `_declare_events` (added fields rotate the shared source, OPC UA's `_rotate_source`) -> `_start_transport`.
-- Jobs on the loop: health (ReadState, logs `_target`, doubles as liveness), poll (sum read), sweep (re-read subscribed symbols silent for `min_update_interval`). Reads are by (index group, index offset, size), never by handle: nothing to release, and a stale address is an ADS error that triggers a re-upload.
+- Jobs on the loop: health (ReadState, logs `_target`, doubles as liveness), poll (sum read), sweep (re-read subscribed symbols silent for `min_update_interval`). Reads are by (index group, index offset, size), never by handle: nothing to release, and a stale address is an ADS error that triggers a re-upload. Writes go by symbol handle (0xF003 get, 0xF005 write and read back, 0xF006 release in a `finally`): the target resolves the name at write time.
 - Errors: router/client codes (<1792, >=1856) and OSError = link lost -> disconnect, reconnect (first loss at once, then backoff); `RESYNC_CODES` = addresses stale -> same path; other device errors count, 5 in a row reconnect. TwinCAT's symbol-version notification (0xF008) sets `_resync`.
 - Shutdown bounded by `SHUTDOWN_TIMEOUT` (3 s): notifications deleted, link closed, executor abandoned if wedged.
 
 ### Actions
 
-- Free functions, `target` optional with one target. Failure convention: raise. `read_symbol` / `write_symbol` resolve against the last upload (every scalar, not only traced ones). `write_symbol` reads back.
+- Free functions, `target` optional with one target. Failure convention: raise. `read_symbol` / `write_symbol` resolve the type against the last upload (every scalar, not only traced ones). `write_symbol` writes by handle and reads back through it; ADS 1808 (symbol gone) is a ValueError.
 - `add_route` and `auto_config` are standalone (run with the extension stopped); the schema's `ui:options.autoconfig` names the latter.
 
 ### Demo
 
-- `DemoPlc` ticks at 10 ms on its own thread; `DemoLink` drives it in-process (demo mode, fast tests). `DemoServer` speaks AMS/TCP (READ, WRITE, READWRITE incl. sum read and the three upload index groups, READSTATE, READDEVICEINFO, ADD/DEL notification, DEVICENOTE push) so pyads reaches the same PLC in the wire tests; `stop()` drops its clients like a TwinCAT restart.
+- `DemoPlc` ticks at 10 ms on its own thread; `DemoLink` drives it in-process (demo mode, fast tests). `DemoServer` speaks AMS/TCP (READ, WRITE, READWRITE incl. sum read, the three upload index groups and symbol handles (0xF003/5/6), READSTATE, READDEVICEINFO, ADD/DEL notification, DEVICENOTE push) so pyads reaches the same PLC in the wire tests; `stop()` drops its clients like a TwinCAT restart.
 
 ## Code Style
 

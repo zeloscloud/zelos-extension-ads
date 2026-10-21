@@ -18,7 +18,12 @@ from pyads.pyads_ex import ADSError
 
 from zelos_extension_ads import symbols as sym
 from zelos_extension_ads.symbols import SymbolEntry, TypeEntry
-from zelos_extension_ads.transport import ADSIGRP_SYM_VERSION, NotifyCallback
+from zelos_extension_ads.transport import (
+    ADSIGRP_SYM_RELEASEHND,
+    ADSIGRP_SYM_VALBYHND,
+    ADSIGRP_SYM_VERSION,
+    NotifyCallback,
+)
 
 DEMO_NET_ID = "192.168.100.10.1.1"
 DEMO_HOST = "127.0.0.1"
@@ -99,6 +104,7 @@ class DemoPlc:
     types: dict[str, TypeEntry] = field(default_factory=demo_types)
     vars: dict[str, _Var] = field(default_factory=dict)
     _subs: dict[int, _Sub] = field(default_factory=dict)
+    _handles: dict[int, str] = field(default_factory=dict)  # symbol handle -> name
     _next: int = 1
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _thread: threading.Thread | None = None
@@ -138,9 +144,16 @@ class DemoPlc:
         self._offset += size
 
     def online_change(self) -> None:
-        """A program download: one variable more, and the symbol version moves."""
+        """A program download: one output more, laid out ahead of bOut1, so every
+        variable from there moves; the symbol version moves with them."""
         with self._lock:
-            self._declare("MAIN.nAdded", "INT")
+            self._declare("MAIN.bOut0", "BOOL", IG_OUTPUTS, "demo output 0")
+            names = list(self.vars)
+            names.insert(names.index("MAIN.bOut1"), names.pop())
+            self.vars = {n: self.vars[n] for n in names}
+            offset = 0
+            for var in self.vars.values():
+                var.entry.index_offset, offset = offset, offset + var.entry.size
             self._version.data[0] = (self._version.data[0] + 1) & 0xFF
 
     # ─── Program ────────────────────────────────────────────────────────────
@@ -211,6 +224,13 @@ class DemoPlc:
     # ─── ADS surface ────────────────────────────────────────────────────────
 
     def _find(self, group: int, offset: int, size: int) -> tuple[_Var, int]:
+        if group == ADSIGRP_SYM_VALBYHND:
+            name = self._handles.get(offset)
+            if name is None:
+                raise ADSError(1809)  # symbol version invalid: no such handle
+            if size > self.vars[name].entry.size:
+                raise ADSError(1797)  # parameter size not correct
+            return self.vars[name], 0
         for var in (*self.vars.values(), self._version):
             e = var.entry
             if (
@@ -245,8 +265,26 @@ class DemoPlc:
 
     def write(self, group: int, offset: int, data: bytes) -> None:
         with self._lock:
+            if group == ADSIGRP_SYM_RELEASEHND:
+                self.release_handle(struct.unpack("<I", data)[0])
+                return
             var, start = self._find(group, offset, len(data))
             var.data[start : start + len(data)] = data
+
+    def get_handle(self, name: str) -> int:
+        """0xF003: a handle onto `name`, resolved now and by every access through it."""
+        with self._lock:
+            match = next((n for n in self.vars if n.lower() == name.lower()), None)
+            if match is None:
+                raise ADSError(1808)
+            handle, self._next = self._next, self._next + 1
+            self._handles[handle] = match
+        return handle
+
+    def release_handle(self, handle: int) -> None:
+        with self._lock:
+            if self._handles.pop(handle, None) is None:
+                raise ADSError(1809)
 
     def sum_read(self, items: Sequence[tuple[int, int, int]]) -> list[bytes | int]:
         out: list[bytes | int] = []
@@ -351,6 +389,15 @@ class DemoLink:
 
     def write(self, group: int, offset: int, data: bytes) -> None:
         self._require().write(group, offset, data)
+
+    def write_by_name(self, name: str, data: bytes) -> bytes:
+        plc = self._require()
+        handle = plc.get_handle(name)
+        try:
+            plc.write(ADSIGRP_SYM_VALBYHND, handle, data)
+            return plc.read(ADSIGRP_SYM_VALBYHND, handle, len(data))
+        finally:
+            plc.release_handle(handle)
 
     def sum_read(self, items: Sequence[tuple[int, int, int]]) -> list[bytes | int]:
         return self._require().sum_read(items)

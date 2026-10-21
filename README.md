@@ -113,7 +113,7 @@ Event keys become trace events, symbols their fields. Types and addresses come f
 |--------|-------------|
 | `get_status` | Connection state, transport, counters, PLC state |
 | `list_symbols` | Every scalar on the target and where it is traced; `pattern` filters |
-| `read_symbol` / `write_symbol` | Read or write one scalar by PLC name (write reads back) |
+| `read_symbol` / `write_symbol` | Read or write one scalar by PLC name; the write goes by symbol handle, resolved on the target, and reads back |
 | `plc_state` | ADS state (RUN, STOP, CONFIG...) and runtime version; read-only |
 | `add_route` | Add this machine's route to a target with a TwinCAT user name and password |
 | `auto_config` | Find targets for the config form |
