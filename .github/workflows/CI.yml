@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - uses: extractions/setup-just@v4
+
+      - name: Verify uv.lock is in sync with pyproject.toml
+        # CI runs on Linux only; a stale lock (e.g. a dependency left gated to
+        # one platform, or a version bump not re-locked) otherwise ships in the
+        # marketplace package and fails at install on other platforms.
+        run: uv lock --locked
+
+      - name: Install dependencies
+        run: just ci-install
+
+      - name: Run linting
+        run: just check
+
+      - name: Run tests
+        run: just test

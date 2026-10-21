@@ -1,0 +1,195 @@
+{
+  "$comment": "Beckhoff ADS extension configuration schema. See https://docs.zeloscloud.io/sdk/how-to/develop-extensions/#configuration",
+  "type": "object",
+  "title": "Beckhoff ADS Configuration",
+  "description": "Configure TwinCAT targets and how their PLC variables are traced",
+  "ui:options": {
+    "autoconfig": "Beckhoff ADS/auto_config"
+  },
+  "properties": {
+    "targets": {
+      "type": "array",
+      "title": "Targets",
+      "description": "TwinCAT runtimes to trace. Click 'Add' to add one, or use Auto-configure to find TwinCAT routers on this machine and its network (UDP broadcast) and fill in their AMS NetIds.",
+      "default": [],
+      "items": {
+        "type": "object",
+        "title": "Target",
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Label this target appears under in the trace and the `target` parameter of the actions. Defaults to the host (e.g. cx9240, 192_168_1_10); sanitized like field names.",
+            "default": "",
+            "ui:placeholder": "defaults to host"
+          },
+          "host": {
+            "type": "string",
+            "title": "Host",
+            "description": "IP address or host name of the TwinCAT router; `localhost` for the TwinCAT this agent runs on.",
+            "default": "localhost",
+            "ui:placeholder": "192.168.1.10"
+          },
+          "ams_net_id": {
+            "type": "string",
+            "title": "AMS NetId",
+            "description": "The target's AMS NetId (e.g. 5.1.2.3.1.1). Leave empty to ask the router at Host for it on every connect (UDP 48899).",
+            "default": "",
+            "ui:placeholder": "asked from the host when empty"
+          },
+          "port": {
+            "type": "integer",
+            "title": "AMS Port",
+            "description": "The PLC runtime: 851 for the first TwinCAT 3 PLC, 852 for the second, 801 for TwinCAT 2.",
+            "default": 851,
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "symbol_map_file": {
+            "type": "string",
+            "title": "Symbol Map File",
+            "description": "JSON map of the symbols to trace, grouped into events. Leave empty to trace every scalar PLC variable the target holds (see Advanced > Include / Exclude).",
+            "default": "",
+            "ui:widget": "file-picker",
+            "ui:options": {
+              "accept": ".json"
+            },
+            "ui:help": "JSON file grouping PLC symbols into named events"
+          },
+          "cycle_time": {
+            "type": "integer",
+            "title": "Cycle Time (ms)",
+            "description": "How often the target checks subscribed symbols for a change (notification transport), or the poll period (poll transport).",
+            "default": 100,
+            "minimum": 1,
+            "maximum": 60000
+          },
+          "transport": {
+            "type": "string",
+            "title": "Transport",
+            "description": "'default' uses Advanced > Transport.",
+            "enum": [
+              "default",
+              "notification",
+              "poll"
+            ],
+            "default": "default"
+          },
+          "include": {
+            "type": "array",
+            "title": "Include",
+            "description": "Without a symbol map: symbol globs to trace (`*` one segment, `**` any depth), e.g. MAIN.** or GVL_IO.*. Empty uses Advanced > Include.",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "exclude": {
+            "type": "array",
+            "title": "Exclude",
+            "description": "Without a symbol map: symbol globs not traced, e.g. **.bDebug. Wins over include. Empty uses Advanced > Exclude.",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        },
+        "required": [
+          "host"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "advanced": {
+      "type": "object",
+      "title": "Advanced",
+      "description": "Settings shared by every target, and the defaults a target inherits.",
+      "properties": {
+        "prefix": {
+          "type": "string",
+          "title": "Prefix",
+          "description": "Leading trace source every target publishes under, so events read '<prefix>/<target>/<POU>'. Clear it to give each target its own trace source with unprefixed events.",
+          "default": "ADS",
+          "ui:placeholder": "ADS",
+          "ui:emptyValue": ""
+        },
+        "timeout": {
+          "type": "number",
+          "title": "Timeout (seconds)",
+          "description": "ADS request timeout",
+          "default": 5.0,
+          "minimum": 1.0,
+          "maximum": 30.0
+        },
+        "log_level": {
+          "type": "string",
+          "title": "Log Level",
+          "description": "Logging verbosity",
+          "enum": [
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR"
+          ],
+          "default": "INFO"
+        },
+        "local_ams_net_id": {
+          "type": "string",
+          "title": "Local AMS NetId",
+          "description": "The AMS NetId this extension presents, on a machine without a TwinCAT router (Linux, macOS). Empty derives it from this machine's IP toward the first target plus `.1.1`. The target must hold a route for it (Add Route action, or TwinCAT XAE). Ignored where TwinCAT's own router runs (Beckhoff devices, Windows with TwinCAT).",
+          "default": "",
+          "ui:placeholder": "derived from the local IP"
+        },
+        "transport": {
+          "type": "string",
+          "title": "Transport",
+          "description": "'notification': the target pushes value changes (ADS device notifications, one per symbol), checked every cycle time. 'poll': one sum read of every symbol per cycle time. A target with more symbols than Max Notifications polls.",
+          "enum": [
+            "notification",
+            "poll"
+          ],
+          "default": "notification"
+        },
+        "max_notifications": {
+          "type": "integer",
+          "title": "Max Notifications",
+          "description": "Symbols per target above which the notification transport falls back to polling, with one warning.",
+          "default": 1000,
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "min_update_interval": {
+          "type": "number",
+          "title": "Min Update Interval (seconds)",
+          "description": "With notifications, a symbol that reports no change for this long is re-read and logged at the read time.",
+          "default": 60.0,
+          "minimum": 1.0,
+          "maximum": 3600
+        },
+        "include": {
+          "type": "array",
+          "title": "Include",
+          "description": "Without a symbol map: symbol globs to trace, over the dotted symbol path (`*` within one segment, `**` any depth), e.g. MAIN.**. Empty traces every PLC variable except TwinCAT's own (TwinCAT_*, Constants, Global_Version, LREAL_CONST), which an include may name.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "exclude": {
+          "type": "array",
+          "title": "Exclude",
+          "description": "Without a symbol map: symbol globs not traced, e.g. GVL_Debug.** or **.bSimulate. Wins over include.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "default": {},
+      "ui:options": {
+        "collapsed": true
+      }
+    }
+  }
+}
