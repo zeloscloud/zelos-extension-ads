@@ -91,7 +91,11 @@ def _target_field(func: Any) -> Any:
 # ─── Status and symbols ─────────────────────────────────────────────────────
 
 
-@zelos_sdk.action("Get Status", "Get connection and transport status; every target when omitted")
+@zelos_sdk.action(
+    "Get Status",
+    "Get connection and transport status; every target when omitted",
+    read_only=True,
+)
 @_target_field
 def get_status(target: str = "") -> dict[str, Any]:
     if target:
@@ -104,6 +108,7 @@ def get_status(target: str = "") -> dict[str, Any]:
     "List Symbols",
     "The scalar symbols the target holds (structs and arrays flattened) and where each "
     "is traced; every target's when omitted",
+    read_only=True,
 )
 @_target_field
 @zelos_sdk.action.text(
@@ -131,7 +136,7 @@ def plc_state(target: str = "") -> dict[str, Any]:
 # ─── Read / write ───────────────────────────────────────────────────────────
 
 
-@zelos_sdk.action("Read Symbol", "Read one scalar symbol by name")
+@zelos_sdk.action("Read Symbol", "Read one scalar symbol by name", read_only=True)
 @_target_field
 @zelos_sdk.action.text(
     "symbol", title="Symbol", description="e.g. MAIN.nCycle or MAIN.stMotor.fSpeed"
