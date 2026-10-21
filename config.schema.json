@@ -102,9 +102,9 @@
           "ethercat_ams_net_id": {
             "type": "string",
             "title": "EtherCAT AMS NetId",
-            "description": "The EtherCAT master device's own AMS NetId, shown on its EtherCAT tab in TwinCAT XAE. Empty uses the target's NetId with the last two numbers set to 2.1, which is the first EtherCAT device on every TwinCAT.",
+            "description": "The EtherCAT master device's own AMS NetId, shown on its EtherCAT tab in TwinCAT XAE. Empty asks the target's I/O server for its first EtherCAT device on every connect.",
             "default": "",
-            "ui:placeholder": "target NetId with .2.1"
+            "ui:placeholder": "first EtherCAT device"
           }
         },
         "required": [
@@ -166,8 +166,8 @@
         "max_notifications": {
           "type": "integer",
           "title": "Max Notifications",
-          "description": "Symbols per target above which the notification transport falls back to polling, with one warning.",
-          "default": 1000,
+          "description": "Notifications per target, the symbol-version one included, above which the notification transport falls back to polling, with one warning. Beckhoff allows 550 per ADS port.",
+          "default": 500,
           "minimum": 1,
           "maximum": 100000
         },

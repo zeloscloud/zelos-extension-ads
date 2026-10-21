@@ -117,7 +117,7 @@ def demo_server(host: str, port: int) -> None:
 @click.option(
     "--ethercat",
     is_flag=True,
-    help="Also trace the target's EtherCAT master (NetId = target NetId with .2.1)",
+    help="Also trace the target's EtherCAT master (its first EtherCAT device)",
 )
 def trace(
     host: str,

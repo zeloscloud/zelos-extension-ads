@@ -27,7 +27,7 @@ from zelos_extension_ads.transport import (
 )
 
 DEMO_NET_ID = "192.168.100.10.1.1"
-DEMO_ECAT_NET_ID = ecat.ethercat_net_id(DEMO_NET_ID)
+DEMO_ECAT_NET_ID = "192.168.100.10.2.1"
 DEMO_HOST = "127.0.0.1"
 DEMO_PORT = 851
 TASK_SECONDS = 0.01
@@ -157,7 +157,7 @@ class DemoEtherCAT:
         if group == ecat.IG_MASTER_STATE and offset == ecat.IO_MASTER_STATE:
             data = struct.pack("<H", self.al_state)
         elif group == ecat.IG_SLAVE_COUNT:
-            data = struct.pack("<I", len(self.slaves))
+            data = struct.pack("<H", len(self.slaves))
         elif group == ecat.IG_SLAVE_ADDRESSES:
             data = b"".join(struct.pack("<H", s.address) for s in self.slaves)
         elif group == ecat.IG_SLAVE_STATES and offset == 0:
@@ -178,7 +178,9 @@ class DemoEtherCAT:
         return data.ljust(size, b"\0")
 
     def read_port(self, ams_port: int, group: int, offset: int, size: int) -> bytes:
-        """A slave's port: CoE SDO upload."""
+        """The I/O server's device list, or a slave's port: CoE SDO upload."""
+        if ams_port == ecat.IO_PORT:
+            return self._io_server(group, offset)[:size]
         slave = next((s for s in self.slaves if s.address == ams_port), None)
         if slave is None:
             raise ADSError(6)  # target port not found
@@ -190,6 +192,29 @@ class DemoEtherCAT:
         if data is None:
             raise ADSError(1796)
         return data[:size]
+
+    @staticmethod
+    def _io_server(group: int, offset: int) -> bytes:
+        """Two I/O devices, as TwinCAT lists them: a non-EtherCAT one, then the master."""
+        devices = {
+            1: (0, b"Device 1 (Image)"),
+            2: (ecat.IODEVICETYPE_ETHERCAT, b"Device 2 (EtherCAT)"),
+        }
+        if group == ecat.IG_IO_DEVICES and offset == ecat.IO_COUNT:
+            return struct.pack("<I", len(devices))
+        if group == ecat.IG_IO_DEVICES and offset == ecat.IO_IDS:
+            return struct.pack(f"<{len(devices) + 1}H", len(devices), *devices)
+        device = devices.get(group - ecat.IG_IO_DEVICE)
+        if device is None:
+            raise ADSError(1793)
+        device_type, name = device
+        if offset == ecat.IO_TYPE:
+            return struct.pack("<H", device_type)
+        if offset == ecat.IO_NAME:
+            return name + b"\0"
+        if offset == ecat.IO_NET_ID:
+            return bytes(int(p) for p in DEMO_ECAT_NET_ID.split("."))
+        raise ADSError(1796)
 
 
 @dataclass

@@ -12,7 +12,7 @@ import zelos_sdk
 from pyads.pyads_ex import ADSError
 
 from tests.conftest import running, server, wait_until, wire, wire_client
-from zelos_extension_ads import actions
+from zelos_extension_ads import actions, ams
 from zelos_extension_ads.cli import app
 from zelos_extension_ads.client import ADSClient, ADSRunner, SharedSource
 from zelos_extension_ads.demo.plc import DEMO_NET_ID, DemoLink, DemoPlc
@@ -43,6 +43,7 @@ async def test_notifications_trace_at_plc_time():
         assert all(t is not None for t, _ in cycles[1:])  # PLC-stamped after the first read
         assert [v for _, v in cycles] == sorted(v for _, v in cycles)
         assert rows.of("MAIN", "sState")[0][1] == "RUNNING"  # static: sweep, not notification
+        assert rows.of("MAIN", "sState")[0][0] is not None  # on the notifications' time base
         assert rows.of("MAIN", "stMotor_fSpeed") and rows.of("GVL_IO", "nPressure")
         assert not rows.of("TwinCAT_SystemInfoVarList", "_AppInfo_AppName")
         health = rows.of(HEALTH_EVENT, "state_name")
@@ -156,6 +157,15 @@ def test_error_classes():
     assert is_connection_error(OSError("gone"))
     assert not is_connection_error(ADSError(1808)) and needs_resync(ADSError(1808))
     assert not is_connection_error(ADSError(1793)) and not needs_resync(ADSError(1793))
+
+
+def test_add_route_reply():
+    """Tag 1 is a u32 ADS result, read whole: 0x0700 is not success."""
+    head = ams._UDP_MAGIC + bytes(4) + bytes((6, 0, 0, 0x80)) + bytes(8)
+    for code in (0, 0x704, 0x700):
+        reply = head + struct.pack("<I", 2) + struct.pack("<HH", 5, 1) + b"x"
+        assert ams.parse_add_route_reply(reply + struct.pack("<HHI", 1, 4, code)) == code
+    assert ams.parse_add_route_reply(head + struct.pack("<IHHH", 1, 1, 2, 0)) is None
 
 
 # ─── Over the wire: pyads -> AMS/TCP -> demo PLC ────────────────────────────

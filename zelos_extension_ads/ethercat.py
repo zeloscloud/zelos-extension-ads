@@ -1,9 +1,10 @@
 """EtherCAT diagnostics through the TwinCAT EtherCAT master's own ADS interface.
 
-The master is an ADS device of its own: the runtime's AMS NetId with the fifth
-number set to 2 (the first EtherCAT device; XAE shows it on the device's
-EtherCAT tab, the PLC as `InfoData.AmsNetId`), AMS port 0xFFFF. Each slave
-answers CoE on the port equal to its station address (1001...).
+The master is an ADS device of its own (XAE shows its NetId on the device's
+EtherCAT tab, the PLC as `InfoData.AmsNetId`), AMS port 0xFFFF. Its NetId is
+asked from the runtime's I/O server (AMS port 300), as Beckhoff's AdsTool
+`ecat list-masters` does. Each slave answers CoE on the port equal to its
+station address (1001...).
 
 Every function here runs on the client's worker thread, on a `Link` to the
 master device.
@@ -21,9 +22,15 @@ from zelos_extension_ads.symbols import sanitize
 from zelos_extension_ads.transport import Link
 
 MASTER_PORT = 0xFFFF
+# The runtime's I/O server (AMSPORT_R0_IO): its devices, as AdsLib's ECatAccess reads them.
+IO_PORT = 300
+IG_IO_DEVICES = 0x5000  # offset 2: u32 count; offset 1: u16 count, then u16 ids
+IG_IO_DEVICE = 0x5000  # + id: offset 1 name, 5 NetId, 7 u16 type
+IO_COUNT, IO_IDS, IO_NAME, IO_NET_ID, IO_TYPE = 2, 1, 1, 5, 7
+IODEVICETYPE_ETHERCAT = 94
 # Index groups on the master port (Beckhoff Infosys, EtherCAT master ADS interface).
 IG_MASTER_STATE = 0x3  # offset 0x100: u16 state
-IG_SLAVE_COUNT = 0x6  # u32 projected slaves
+IG_SLAVE_COUNT = 0x6  # u16 projected slaves
 IG_SLAVE_ADDRESSES = 0x7  # u16 station address per slave
 IG_SLAVE_STATES = 0x9  # 2 bytes per slave: EtherCAT state, link status
 IG_FRAME_COUNTERS = (
@@ -42,7 +49,12 @@ ADS_PORT_NOT_CONNECTED = 13
 MASTER_EVENT = "_ethercat"
 
 AL_STATE_NAMES = {0: "NONE", 1: "INIT", 2: "PREOP", 3: "BOOT", 4: "SAFEOP", 8: "OP"}
-ERROR_FLAG = 0x10
+# Flags on the state byte (Infosys, FB_EcGetAllSlaveStates).
+STATE_FLAGS = (
+    (0x10, "ERROR"),  # the slave signals an error
+    (0x20, "INVALID_VPRS"),  # invalid vendor, product, revision or serial read
+    (0x40, "INIT_ERROR"),  # an init command failed
+)
 LINK_BITS = (
     (0x01, "not present"),
     (0x02, "no communication"),
@@ -90,14 +102,46 @@ _SDO_FORMATS = {
 }  # fmt: skip
 
 
-def ethercat_net_id(runtime_net_id: str) -> str:
-    """The first EtherCAT device's NetId by TwinCAT's convention: `a.b.c.d.2.1`."""
-    return ".".join(runtime_net_id.split(".")[:4] + ["2", "1"])
+@dataclass
+class Master:
+    """An EtherCAT device of the runtime's I/O server."""
+
+    device_id: int
+    name: str
+    net_id: str
+
+
+def discover_masters(link: Link) -> list[Master]:
+    """Worker thread: the EtherCAT devices on the I/O server, in device id order; `link`
+    is the runtime's (its NetId addresses the I/O server)."""
+    count = struct.unpack("<I", link.read_port(IO_PORT, IG_IO_DEVICES, IO_COUNT, 4))[0]
+    if not count:
+        return []
+    if count > 0xFFFF:
+        raise ValueError(f"I/O server reports {count} devices")
+    ids = struct.unpack_from(
+        f"<{count}H", link.read_port(IO_PORT, IG_IO_DEVICES, IO_IDS, 2 * (count + 1)), 2
+    )
+    masters = []
+    for device_id in ids:
+        group = IG_IO_DEVICE + device_id
+        device_type = struct.unpack("<H", link.read_port(IO_PORT, group, IO_TYPE, 2))[0]
+        if device_type != IODEVICETYPE_ETHERCAT:
+            continue
+        name = link.read_port(IO_PORT, group, IO_NAME, 255).split(b"\0", 1)[0]
+        net_id = link.read_port(IO_PORT, group, IO_NET_ID, 6)
+        if len(net_id) != 6:
+            raise ValueError(f"I/O device {device_id}: {len(net_id)}-byte NetId")
+        masters.append(
+            Master(device_id, name.decode("cp1252", "replace"), ".".join(map(str, net_id)))
+        )
+    return masters
 
 
 def al_state_name(state: int) -> str:
+    """`OP`, `SAFEOP+ERROR`, `PREOP+ERROR+INVALID_VPRS`."""
     base = AL_STATE_NAMES.get(state & 0x0F, f"0x{state & 0x0F:02X}")
-    return f"{base}+ERROR" if state & ERROR_FLAG else base
+    return "+".join([base, *(name for bit, name in STATE_FLAGS if state & bit)])
 
 
 def link_state_name(link: int) -> str:
@@ -214,7 +258,7 @@ def read_snapshot(link: Link, identities: dict[int, tuple[int, int, int, int]]) 
         "<5I", link.read(IG_FRAME_COUNTERS, 0, 20)
     )
     snapshot = Snapshot(al_state, cyclic, lost, acyclic, lost_acyclic)
-    count = struct.unpack("<I", link.read(IG_SLAVE_COUNT, 0, 4))[0]
+    count = struct.unpack("<H", link.read(IG_SLAVE_COUNT, 0, 2))[0]
     if not count:
         return snapshot
     addresses = struct.unpack(f"<{count}H", link.read(IG_SLAVE_ADDRESSES, 0, 2 * count))

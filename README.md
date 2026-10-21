@@ -46,7 +46,7 @@ In the app:
 | Transport | `notification` | `notification` (PLC pushes changes) or `poll` |
 | Include / Exclude | | Symbol globs (`MAIN.**`, `**.bDebug`) |
 | EtherCAT Diagnostics | off | Also trace the target's [EtherCAT master](#ethercat-diagnostics) |
-| EtherCAT AMS NetId | target NetId with `.2.1` | The EtherCAT device's own NetId (its EtherCAT tab in XAE) |
+| EtherCAT AMS NetId | first EtherCAT device | The EtherCAT device's own NetId (its EtherCAT tab in XAE) |
 
 ### Advanced
 
@@ -59,7 +59,7 @@ Applies to every target unless the target overrides it.
 | `log_level` | `INFO` | Logging verbosity |
 | `local_ams_net_id` | derived | The one NetId this machine presents to every target (Linux, macOS); empty = local IP toward the first target + `.1.1` |
 | `transport` | `notification` | Default transport |
-| `max_notifications` | `1000` | Symbols per target above which it polls |
+| `max_notifications` | `500` | Notifications per target (symbols plus the symbol-version one) above which it polls; Beckhoff allows 550 per ADS port |
 | `min_update_interval` | `60` | Re-read a subscribed symbol silent this long (s); log an unchanged EtherCAT slave again this often |
 | `ethercat_interval` | `1.0` | EtherCAT master and slave read period (s) |
 | `include` / `exclude` | | Symbol globs; TwinCAT's own GVLs are excluded unless included |
@@ -84,7 +84,7 @@ A target without a symbol map traces every scalar PLC variable it holds, read-on
 
 ### EtherCAT diagnostics
 
-A target with EtherCAT Diagnostics on also reads the TwinCAT EtherCAT master through its own ADS device (AMS port 0xFFFF on the EtherCAT device's NetId, by convention the target's NetId with `.2.1`) every `ethercat_interval`. No PLC code or license is involved; the master is in OP whenever the I/O runs, PLC or not.
+A target with EtherCAT Diagnostics on also reads the TwinCAT EtherCAT master through its own ADS device (AMS port 0xFFFF on the EtherCAT device's NetId, asked on every connect from the runtime's I/O server on AMS port 300 as Beckhoff's AdsTool does; the first EtherCAT device unless `ethercat_ams_net_id` names one) every `ethercat_interval`. No PLC code or license is involved; the master is in OP whenever the I/O runs, PLC or not.
 
 | Event | Fields |
 |---|---|

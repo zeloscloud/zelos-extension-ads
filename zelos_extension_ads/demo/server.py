@@ -114,7 +114,7 @@ class DemoServer:
         try:
             if tport == DEMO_PORT:
                 result, body = 0, self._dispatch(client, cmd, data)
-            elif tport == ecat.MASTER_PORT or any(
+            elif tport in (ecat.MASTER_PORT, ecat.IO_PORT) or any(
                 s.address == tport for s in self.plc.ethercat.slaves
             ):
                 result, body = 0, self._dispatch_ethercat(tport, cmd, data)
@@ -131,7 +131,7 @@ class DemoServer:
         return struct.pack("<xxI", len(header) + len(payload)) + header + payload
 
     def _dispatch_ethercat(self, tport: int, cmd: int, data: bytes) -> bytes:
-        """The EtherCAT master and its slaves: reads and ReadState only, as TwinCAT."""
+        """The EtherCAT master, the I/O server and the slaves: reads and ReadState only."""
         if cmd == READ_STATE:
             return struct.pack("<HH", 0, 0)
         if cmd != READ:

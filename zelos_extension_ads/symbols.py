@@ -73,6 +73,9 @@ _SYMBOL_HEADER = struct.Struct("<6I3H")  # entryLength, iGroup, iOffs, size, dat
 _TYPE_HEADER = struct.Struct("<8I5H")  # + version, hashes, offs; lens, arrayDim, subItems
 _ARRAY_INFO = struct.Struct("<iI")  # lower bound, element count
 _UNRESOLVED = ("POINTER TO ", "REFERENCE TO ")
+# ADSDATATYPEFLAG_*: a BITVALUES member's offset and size are in bits; STATIC and
+# PROPITEM members hold no data at their offset.
+FLAG_BITVALUES, FLAG_PROPITEM, FLAG_STATIC = 0x20, 0x40, 0x20000
 
 
 @dataclass
@@ -167,6 +170,7 @@ class Field:
     comment: str = ""
     unit: str = ""
     scale: float = 1.0
+    bit: int = -1  # a BIT struct member: its bit in the byte at index_offset
 
     @property
     def datatype(self) -> zelos_sdk.DataType:
@@ -192,19 +196,19 @@ def _element_type(type_name: str) -> str:
 
 def _offsets(
     path: str, type_name: str, size: int, data_type: int, types: dict[str, TypeEntry]
-) -> list[tuple[str, int, int, int, str]]:
-    """Leaves with their byte offset from the symbol's start.
+) -> list[tuple[str, int, int, int, str, int]]:
+    """Leaves with their byte offset from the symbol's start, and their bit (-1 if none).
 
     A leaf is a scalar of exactly its type's size: an aggregate the tables left
     unresolved is skipped rather than read, or written zero-padded, as one.
     """
     out = []
-    # (path, type name, size, ADS type, offset, depth, a member's own array dims)
-    stack: list[tuple[str, str, int, int, int, int, list[tuple[int, int]]]] = [
-        (path, type_name, size, data_type, 0, 0, [])
+    # (path, type name, size, ADS type, offset, depth, a member's own array dims, bit)
+    stack: list[tuple[str, str, int, int, int, int, list[tuple[int, int]], int]] = [
+        (path, type_name, size, data_type, 0, 0, [], -1)
     ]
     while stack:
-        p, tn, sz, dt, base, depth, inline = stack.pop()
+        p, tn, sz, dt, base, depth, inline, bit = stack.pop()
         if depth > 16 or tn.startswith(_UNRESOLVED):
             continue
         entry = types.get(tn)
@@ -237,28 +241,38 @@ def _offsets(
                         base + flat * element,
                         depth + 1,
                         [],
+                        -1,
                     )
                 )
         elif entry is not None and entry.members:
             for member in reversed(entry.members):
+                if member.flags & (FLAG_STATIC | FLAG_PROPITEM):
+                    continue
+                offset, member_bit = member.offset, -1
+                if member.flags & FLAG_BITVALUES:
+                    # Offset and size in bits; only a single BIT is a leaf.
+                    if member.data_type != ADST_BIT or member.size != 1 or member.dims:
+                        continue
+                    offset, member_bit = member.offset // 8, member.offset % 8
                 stack.append(
                     (
                         f"{p}.{member.name}",
                         member.type_name,
                         member.size,
                         member.data_type,
-                        base + member.offset,
+                        base + offset,
                         depth + 1,
                         member.dims,
+                        member_bit,
                     )
                 )
         elif dt in SCALARS:
             fixed = SCALARS[dt][2]
             if fixed and sz != fixed:
                 continue
-            out.append((p, base, sz, dt, tn))
+            out.append((p, base, sz, dt, tn, bit))
         elif entry is not None and entry.type_name and entry.type_name != tn:
-            stack.append((p, entry.type_name, sz, entry.data_type, base, depth + 1, []))
+            stack.append((p, entry.type_name, sz, entry.data_type, base, depth + 1, [], bit))
     return out
 
 
@@ -280,7 +294,7 @@ def flatten(symbols: Iterable[SymbolEntry], types: dict[str, TypeEntry]) -> list
     for symbol in symbols:
         if "." not in symbol.name:
             continue  # not a PLC variable (no POU or GVL)
-        for path, offset, size, dtype, type_name in _offsets(
+        for path, offset, size, dtype, type_name, bit in _offsets(
             symbol.name, symbol.type_name, symbol.size, symbol.data_type, types
         ):
             event, name = trace_names(path)
@@ -295,6 +309,7 @@ def flatten(symbols: Iterable[SymbolEntry], types: dict[str, TypeEntry]) -> list
                     dtype,
                     type_name,
                     symbol.comment.strip(),
+                    bit=bit,
                 )
             )
     return fields
@@ -303,10 +318,14 @@ def flatten(symbols: Iterable[SymbolEntry], types: dict[str, TypeEntry]) -> list
 # ─── Values ─────────────────────────────────────────────────────────────────
 
 
-def decode(data: bytes, data_type: int, scale: float = 1.0) -> Any:
-    """A Python value from a symbol's bytes; None for a malformed buffer."""
+def decode(data: bytes, data_type: int, scale: float = 1.0, bit: int = -1) -> Any:
+    """A Python value from a symbol's bytes; None for a malformed buffer. `bit` picks
+    one bit of the first byte (a BIT struct member)."""
+    if bit >= 0:
+        return bool(data[0] >> bit & 1) if data else None
     if data_type == ADST_STRING:
-        return data.split(b"\0", 1)[0].decode("latin-1")
+        # TwinCAT STRING is Windows-1252, as pyads and ads-client decode it.
+        return data.split(b"\0", 1)[0].decode("cp1252", errors="replace")
     if data_type == ADST_WSTRING:
         return data.decode("utf-16-le", errors="replace").split("\0", 1)[0]
     _, fmt, size = SCALARS[data_type]
@@ -321,7 +340,7 @@ def decode(data: bytes, data_type: int, scale: float = 1.0) -> Any:
 def encode(value: Any, data_type: int, size: int) -> bytes:
     """A symbol's bytes from a Python value, `size` bytes exactly."""
     if data_type == ADST_STRING:
-        raw = str(value).encode("latin-1", errors="replace")[: max(size - 1, 0)]
+        raw = str(value).encode("cp1252", errors="replace")[: max(size - 1, 0)]
         return raw.ljust(size, b"\0")
     if data_type == ADST_WSTRING:
         raw = str(value).encode("utf-16-le")[: max(size - 2, 0) & ~1]
@@ -489,6 +508,7 @@ class SymbolMap:
                         found.comment,
                         entry.unit,
                         entry.scale,
+                        found.bit,
                     )
                 )
         return out, missing

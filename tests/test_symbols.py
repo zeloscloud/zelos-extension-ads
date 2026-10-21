@@ -59,6 +59,26 @@ def test_multidimensional_array_and_alias():
     assert fields[0].name == "arr_1_0"
 
 
+def test_bit_struct_members():
+    """BITVALUES members carry offset and size in bits; STATIC and PROPITEM hold no data."""
+    bit = sym.FLAG_BITVALUES | 0x2
+    members = [sym.TypeEntry(f"b{i}", "BIT", 1, i, sym.ADST_BIT, bit) for i in range(3)]
+    members += [
+        sym.TypeEntry("w", "WORD", 2, 2, sym.ADST_UINT16, 0x2),
+        sym.TypeEntry("s", "WORD", 2, 0, sym.ADST_UINT16, sym.FLAG_STATIC),
+        sym.TypeEntry("p", "WORD", 2, 0, sym.ADST_UINT16, sym.FLAG_PROPITEM),
+    ]
+    types = {"ST_Flags": sym.TypeEntry("ST_Flags", "", 4, 0, sym.ADST_BIGTYPE, 1, [], members)}
+    entry = sym.SymbolEntry("MAIN.st", "ST_Flags", 0x4040, 100, 4, sym.ADST_BIGTYPE, 8)
+    mem = bytes([0b101, 0, 0x34, 0x12])
+    got = {}
+    for f in sym.flatten([entry], types):
+        o = f.index_offset - 100
+        got[f.symbol] = sym.decode(mem[o : o + f.size], f.data_type, bit=f.bit)
+    assert got == {"MAIN.st.b0": True, "MAIN.st.b1": False, "MAIN.st.b2": True, "MAIN.st.w": 0x1234}
+    assert sym.decode("ä".encode("cp1252"), sym.ADST_STRING) == "ä"
+
+
 def test_trace_names_and_layout():
     assert sym.trace_names("MAIN.stMotor.fSpeed") == ("MAIN", "stMotor_fSpeed")
     assert sym.trace_names("GVL_IO.arr[3].x") == ("GVL_IO", "arr_3_x")

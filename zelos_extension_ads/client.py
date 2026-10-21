@@ -56,11 +56,16 @@ SWEEP_STEPS = 4
 # The symbol version is read with every health probe and subscribed in notification
 # mode; a change means the addresses held are stale.
 STALE_TABLE = "symbol table changed"
+ETHERCAT_FIX = (
+    "set the target's ethercat_ams_net_id to the NetId on the device's EtherCAT tab in "
+    "TwinCAT XAE, or turn its EtherCAT diagnostics off"
+)
 
 ADS_STATES = {
     0: "INVALID", 1: "IDLE", 2: "RESET", 3: "INIT", 4: "START", 5: "RUN", 6: "STOP",
     7: "SAVECFG", 8: "LOADCFG", 9: "POWERFAILURE", 10: "POWERGOOD", 11: "ERROR",
     12: "SHUTDOWN", 13: "SUSPEND", 14: "RESUME", 15: "CONFIG", 16: "RECONFIG",
+    17: "STOPPING", 18: "INCOMPATIBLE", 19: "EXCEPTION",
 }  # fmt: skip
 
 HEALTH_FIELDS = (
@@ -157,7 +162,7 @@ class ADSClient:
         timeout: float = 5.0,
         include: Sequence[str] = (),
         exclude: Sequence[str] = (),
-        max_notifications: int = 1000,
+        max_notifications: int = 500,
         min_update_interval: float = 60.0,
         link_factory: Callable[[], Link] | None = None,
         ethercat: bool = False,
@@ -177,12 +182,14 @@ class ADSClient:
             timeout: ADS request timeout, seconds
             include: Without a map, symbol globs to trace; empty traces everything
             exclude: Without a map, symbol globs not traced; win over include
-            max_notifications: Symbols above which the notification transport polls
+            max_notifications: Notifications per target, the symbol-version one included,
+                above which the notification transport polls (Beckhoff: 550 per ADS port)
             min_update_interval: A subscribed symbol silent this long is re-read; an
                 unchanged EtherCAT slave is logged again this often
             link_factory: Makes the link (tests, demo); default pyads
             ethercat: Also trace the target's EtherCAT master and slaves
-            ethercat_ams_net_id: The EtherCAT master's NetId; empty derives `a.b.c.d.2.1`
+            ethercat_ams_net_id: The EtherCAT master's NetId; empty asks the target for its
+                first EtherCAT device on every connect
             ethercat_interval: EtherCAT read period, seconds
             ethercat_link_factory: Makes the master link (tests, demo); default pyads
 
@@ -399,16 +406,35 @@ class ADSClient:
             self.plc_state = link.read_state()
             self.device = link.device_info()
             if self.ethercat:
-                self._ecat = self._open_ethercat(net_id)
+                self._ecat = self._open_ethercat(link)
         except BaseException:
             with contextlib.suppress(Exception):
                 link.close()
             raise
         self._link = link
 
-    def _open_ethercat(self, net_id: str) -> Link:
+    def _discover_master(self, runtime: Link) -> str:
+        """Worker thread: the first EtherCAT device's NetId, from the runtime's I/O server."""
+        try:
+            masters = ecat.discover_masters(runtime)
+        except Exception as e:
+            raise ConnectError(
+                f"EtherCAT master discovery on {self.net_id} (AMS port {ecat.IO_PORT}): "
+                f"{describe_error(e)}",
+                ETHERCAT_FIX,
+            ) from e
+        if not masters:
+            raise ConnectError(f"no EtherCAT device on {self.net_id}", ETHERCAT_FIX)
+        if len(masters) > 1:
+            self._log.info(
+                "EtherCAT devices: %s; tracing the first",
+                ", ".join(f"{m.name} ({m.net_id})" for m in masters),
+            )
+        return masters[0].net_id
+
+    def _open_ethercat(self, runtime: Link) -> Link:
         """Worker thread: the EtherCAT master's link, its state read once."""
-        ecat_net_id = self.ethercat_ams_net_id or ecat.ethercat_net_id(net_id)
+        ecat_net_id = self.ethercat_ams_net_id or self._discover_master(runtime)
         link = (
             self._ethercat_link_factory()
             if self._ethercat_link_factory
@@ -422,8 +448,7 @@ class ADSClient:
                 link.close()
             raise ConnectError(
                 f"EtherCAT master {ecat_net_id} (AMS port 0xFFFF): {describe_error(e)}",
-                "set the target's ethercat_ams_net_id to the NetId on the device's EtherCAT "
-                "tab in TwinCAT XAE, or turn its EtherCAT diagnostics off",
+                ETHERCAT_FIX,
             ) from e
         self.ethercat_net_id = ecat_net_id
         self._log.info("EtherCAT master %s: %s", ecat_net_id, ecat.al_state_name(state))
@@ -567,9 +592,11 @@ class ADSClient:
         fields = [f for fs in self._events.values() for f in fs]
         self._jobs = [_Job(max(HEALTH_INTERVAL, self.cycle_time / 1000.0), self._poll_health)]
         self._active = self.transport
-        if self.transport == "notification" and len(fields) > self.max_notifications:
+        # The symbol-version subscription counts against the budget too.
+        if self.transport == "notification" and len(fields) + 1 > self.max_notifications:
             self._log.warning(
-                "%d symbols exceed max_notifications (%d): polling this target",
+                "%d symbols and the symbol-version notification exceed max_notifications "
+                "(%d): polling this target",
                 len(fields),
                 self.max_notifications,
             )
@@ -676,7 +703,7 @@ class ADSClient:
         latest = 0
         while self._pending:
             f, stamp_ns, data = self._pending.popleft()
-            value = sym.decode(data, f.data_type, f.scale)
+            value = sym.decode(data, f.data_type, f.scale, f.bit)
             if value is None:
                 self._log_field_failure(f, f"{len(data)} bytes for a {f.type_name}")
                 continue
@@ -693,19 +720,21 @@ class ADSClient:
         if self._resync:
             self._connected = False  # the loop reconnects and uploads again
 
-    async def _read_fields(self, fields: list[Field]) -> None:
-        """One sum read of `fields`, logged at host time, one row per event."""
+    async def _read_fields(self, fields: list[Field], plc_time: bool = False) -> None:
+        """One sum read of `fields`, one row per event, logged at host time; with
+        `plc_time`, at host time minus the measured skew (the notification rows' base)."""
         assert self._link is not None
         results = await self._call(
             self._link.sum_read, [(f.index_group, f.index_offset, f.size) for f in fields]
         )
+        stamp_ns = time.time_ns() - round(self._skew_ms * 1e6)
         rows: dict[str, dict[str, Any]] = {}
         now = time.monotonic()
         for f, result in zip(fields, results, strict=True):
             if isinstance(result, int):
                 self._log_field_failure(f, f"ADS error {result}")
                 continue
-            value = sym.decode(result, f.data_type, f.scale)
+            value = sym.decode(result, f.data_type, f.scale, f.bit)
             if value is None:
                 self._log_field_failure(f, f"{len(result)} bytes for a {f.type_name}")
                 continue
@@ -713,7 +742,11 @@ class ADSClient:
             self._seen[f.key] = now
         for event, values in rows.items():
             trace_event = self._trace_events.get(event)
-            if trace_event is not None and values:
+            if trace_event is None or not values:
+                continue
+            if plc_time:
+                trace_event.log_at(stamp_ns, **values)
+            else:
                 trace_event.log(**values)
         self._poll_count += 1
 
@@ -722,11 +755,11 @@ class ADSClient:
 
     async def _sweep(self) -> None:
         """Re-read subscribed symbols silent for min_update_interval: a static value
-        is logged at least that often."""
+        is logged at least that often, on the notifications' (PLC) time base."""
         cutoff = time.monotonic() - self.min_update_interval
         stale = [f for f in self._handles.values() if self._seen.get(f.key, 0.0) < cutoff]
         if stale:
-            await self._read_fields(stale)
+            await self._read_fields(stale, plc_time=True)
 
     async def _poll_health(self) -> None:
         """ReadState, and the symbol version: polled addresses go stale silently."""
@@ -976,10 +1009,13 @@ class ADSClient:
 
     async def read_value(self, f: Field) -> Any:
         data = await self._call(self._require_link().read, f.index_group, f.index_offset, f.size)
-        return sym.decode(data, f.data_type)
+        return sym.decode(data, f.data_type, bit=f.bit)
 
     async def write_value(self, f: Field, value: Any) -> Any:
         """Write `value` by symbol handle (the target resolves the name) and read it back."""
+        if f.bit >= 0:
+            # A byte write would overwrite the bits sharing it.
+            raise ValueError(f"'{f.symbol}' is a BIT struct member; writing it is not supported")
         data = sym.encode(value, f.data_type, f.size)
         link = self._require_link()
         try:
