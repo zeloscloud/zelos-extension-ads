@@ -92,6 +92,19 @@
               "type": "string"
             },
             "default": []
+          },
+          "ethercat": {
+            "type": "boolean",
+            "title": "EtherCAT Diagnostics",
+            "description": "Also trace the target's EtherCAT master: its state and frame counters under `_ethercat`, and each slave's state, link status, identity and CRC counters under `_ethercat/<position>_<name>`, every Advanced > EtherCAT Interval. Enables the ethercat_slaves and ethercat_read_sdo actions.",
+            "default": false
+          },
+          "ethercat_ams_net_id": {
+            "type": "string",
+            "title": "EtherCAT AMS NetId",
+            "description": "The EtherCAT master device's own AMS NetId, shown on its EtherCAT tab in TwinCAT XAE. Empty uses the target's NetId with the last two numbers set to 2.1, which is the first EtherCAT device on every TwinCAT.",
+            "default": "",
+            "ui:placeholder": "target NetId with .2.1"
           }
         },
         "required": [
@@ -165,6 +178,14 @@
           "default": 60.0,
           "minimum": 1.0,
           "maximum": 3600
+        },
+        "ethercat_interval": {
+          "type": "number",
+          "title": "EtherCAT Interval (seconds)",
+          "description": "How often a target with EtherCAT diagnostics reads its master and slaves. The master event is logged every read; a slave's event on change, and at least every Min Update Interval.",
+          "default": 1.0,
+          "minimum": 0.1,
+          "maximum": 60
         },
         "include": {
           "type": "array",

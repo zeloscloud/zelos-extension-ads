@@ -25,6 +25,7 @@ from zelos_sdk import schemas
 from zelos_sdk.hooks.logging import TraceLoggingHandler
 
 from zelos_extension_ads import ams
+from zelos_extension_ads import ethercat as ecat
 from zelos_extension_ads import symbols as sym
 from zelos_extension_ads.symbols import HEALTH_EVENT, Field, SymbolFilter, SymbolMap
 from zelos_extension_ads.transport import (
@@ -159,6 +160,10 @@ class ADSClient:
         max_notifications: int = 1000,
         min_update_interval: float = 60.0,
         link_factory: Callable[[], Link] | None = None,
+        ethercat: bool = False,
+        ethercat_ams_net_id: str = "",
+        ethercat_interval: float = 1.0,
+        ethercat_link_factory: Callable[[], Link] | None = None,
     ) -> None:
         """
         Args:
@@ -173,8 +178,13 @@ class ADSClient:
             include: Without a map, symbol globs to trace; empty traces everything
             exclude: Without a map, symbol globs not traced; win over include
             max_notifications: Symbols above which the notification transport polls
-            min_update_interval: A subscribed symbol silent this long is re-read
+            min_update_interval: A subscribed symbol silent this long is re-read; an
+                unchanged EtherCAT slave is logged again this often
             link_factory: Makes the link (tests, demo); default pyads
+            ethercat: Also trace the target's EtherCAT master and slaves
+            ethercat_ams_net_id: The EtherCAT master's NetId; empty derives `a.b.c.d.2.1`
+            ethercat_interval: EtherCAT read period, seconds
+            ethercat_link_factory: Makes the master link (tests, demo); default pyads
 
         Raises:
             ValueError: If the transport, filters or NetId are invalid
@@ -185,8 +195,22 @@ class ADSClient:
             raise ValueError(f"cycle_time must be at least 1 ms, got {cycle_time}")
         if min_update_interval <= 0:
             raise ValueError(f"min_update_interval must be positive, got {min_update_interval}")
+        if ethercat_interval <= 0:
+            raise ValueError(f"ethercat_interval must be positive, got {ethercat_interval}")
         if ams_net_id:
             ams_net_id = ams.parse_net_id(ams_net_id)
+        if ethercat_ams_net_id:
+            ethercat_ams_net_id = ams.parse_net_id(ethercat_ams_net_id)
+        self.ethercat = ethercat
+        self.ethercat_ams_net_id = ethercat_ams_net_id
+        self.ethercat_interval = ethercat_interval
+        self._ethercat_link_factory = ethercat_link_factory
+        self.ethercat_net_id = ""  # resolved per connect
+        self._ecat: Link | None = None
+        self._ecat_identities: dict[int, tuple[int, int, int, int]] = {}
+        self._ecat_last: dict[str, tuple[Any, ...]] = {}
+        self._ecat_forced_at = 0.0
+        self.ethercat_snapshot: ecat.Snapshot | None = None
         self.host = host.strip() or "localhost"
         self.name = name or default_target_name(self.host)
         self.ams_net_id = ams_net_id
@@ -262,6 +286,8 @@ class ADSClient:
             self._shared.clients.append(self)
         self._trace_events, self._declared, self._schemas = {}, {}, {}
         self._declare(HEALTH_EVENT, list(HEALTH_FIELDS))
+        if self.ethercat:
+            self._declare(ecat.MASTER_EVENT, list(ecat.MASTER_FIELDS))
         self._log.info("Client started (%s, AMS port %d)", self.host, self.port)
 
     def _declare(self, event: str, fields: list[Declared]) -> None:
@@ -372,11 +398,36 @@ class ADSClient:
         try:
             self.plc_state = link.read_state()
             self.device = link.device_info()
+            if self.ethercat:
+                self._ecat = self._open_ethercat(net_id)
         except BaseException:
             with contextlib.suppress(Exception):
                 link.close()
             raise
         self._link = link
+
+    def _open_ethercat(self, net_id: str) -> Link:
+        """Worker thread: the EtherCAT master's link, its state read once."""
+        ecat_net_id = self.ethercat_ams_net_id or ecat.ethercat_net_id(net_id)
+        link = (
+            self._ethercat_link_factory()
+            if self._ethercat_link_factory
+            else PyadsLink(self.host, ecat_net_id, ecat.MASTER_PORT, self.timeout)
+        )
+        try:
+            link.open()
+            state = ecat.read_master_state(link)
+        except Exception as e:
+            with contextlib.suppress(Exception):
+                link.close()
+            raise ConnectError(
+                f"EtherCAT master {ecat_net_id} (AMS port 0xFFFF): {describe_error(e)}",
+                "set the target's ethercat_ams_net_id to the NetId on the device's EtherCAT "
+                "tab in TwinCAT XAE, or turn its EtherCAT diagnostics off",
+            ) from e
+        self.ethercat_net_id = ecat_net_id
+        self._log.info("EtherCAT master %s: %s", ecat_net_id, ecat.al_state_name(state))
+        return link
 
     async def connect(self) -> bool:
         """Open, upload the symbol table, declare and subscribe; False on failure (logged)."""
@@ -386,6 +437,7 @@ class ADSClient:
             self._handles, self._polled, self._failed, self._seen = {}, [], set(), {}
             self._pending.clear()
             self._resync = ""
+            self._ecat_identities, self._ecat_last = {}, {}
             started = time.monotonic()
             # Version first: a table that moves during the upload still shows as changed.
             self._version = await self._call(self._read_version)
@@ -480,13 +532,15 @@ class ADSClient:
 
     async def _close_link(self) -> None:
         link, self._link = self._link, None
+        ecat_link, self._ecat = self._ecat, None
         if self._flush_handle is not None:
             self._flush_handle.cancel()
             self._flush_handle = None
         self._handles = {}
-        if link is not None:
-            with contextlib.suppress(Exception):
-                await self._call(link.close)
+        for each in (ecat_link, link):
+            if each is not None:
+                with contextlib.suppress(Exception):
+                    await self._call(each.close)
 
     async def disconnect(self) -> None:
         """Close the link, ignoring errors from an already-dead socket."""
@@ -532,6 +586,8 @@ class ADSClient:
             self._polled = fields
         if self._polled:
             self._jobs.append(_Job(self.cycle_time / 1000.0, self._poll))
+        if self._ecat is not None:
+            self._jobs.append(_Job(self.ethercat_interval, self._poll_ethercat))
         self._log.info(
             "Transport %s: %d subscribed, %d polled, cycle %d ms",
             self._active,
@@ -699,6 +755,72 @@ class ADSClient:
             clock_skew_ms=self._skew_ms,
             last_error=self.last_error or "",
         )
+
+    # ─── EtherCAT ───────────────────────────────────────────────────────────
+
+    async def _poll_ethercat(self) -> None:
+        """Master and slaves once; the master row every read (its counters move), a
+        slave's on change and at least every min_update_interval."""
+        assert self._ecat is not None
+        snapshot = await self._call(ecat.read_snapshot, self._ecat, self._ecat_identities)
+        self.ethercat_snapshot = snapshot
+        now = time.monotonic()
+        force = now - self._ecat_forced_at >= self.min_update_interval
+        if force:
+            self._ecat_forced_at = now
+        master = self._trace_events.get(ecat.MASTER_EVENT)
+        if master is not None:
+            master.log(**snapshot.fields())
+        for slave in snapshot.slaves:
+            values = slave.fields()
+            if slave.event not in self._declared:
+                self._declare(slave.event, list(ecat.SLAVE_FIELDS))
+                self._log.info(
+                    "EtherCAT slave %s at %d: vendor 0x%08x product 0x%08x rev 0x%08x, %s",
+                    slave.trace_name,
+                    slave.address,
+                    slave.vendor_id,
+                    slave.product_code,
+                    slave.revision,
+                    ecat.al_state_name(slave.al_state),
+                )
+            key = tuple(values.values())
+            if force or self._ecat_last.get(slave.event) != key:
+                self._ecat_last[slave.event] = key
+                self._trace_events[slave.event].log(**values)
+
+    def _require_ethercat(self) -> Link:
+        if not self.ethercat:
+            raise ValueError(
+                f"EtherCAT diagnostics are off on target '{self.name}'; enable them on the target"
+            )
+        self._require_link()
+        assert self._ecat is not None
+        return self._ecat
+
+    async def read_ethercat(self) -> ecat.Snapshot:
+        """The master and every slave, read now (not logged: the poll does that)."""
+        link = self._require_ethercat()
+        self.ethercat_snapshot = await self._call(ecat.read_snapshot, link, self._ecat_identities)
+        return self.ethercat_snapshot
+
+    async def read_sdo(self, selector: str, index: int, subindex: int) -> tuple[ecat.Slave, bytes]:
+        """CoE SDO upload from the slave `selector` names (see `Snapshot.find`)."""
+        link = self._require_ethercat()
+        if self.ethercat_snapshot is None:
+            raise RuntimeError(f"target '{self.name}' has not read its EtherCAT slaves yet")
+        slave = self.ethercat_snapshot.find(selector)
+        try:
+            data = await self._call(ecat.read_sdo, link, slave.address, index, subindex)
+        except ADSError as e:
+            if e.err_code == ecat.ADS_PORT_NOT_CONNECTED:
+                raise ValueError(
+                    f"EtherCAT slave {slave.trace_name} (address {slave.address}) has no CoE "
+                    "mailbox (ADS 13, port not connected): couplers and digital terminals "
+                    "carry no objects"
+                ) from e
+            raise
+        return slave, data
 
     def _log_field_failure(self, f: Field, reason: str) -> None:
         """One ERROR per bad symbol per connection: per cycle would flood the log and the trace."""
@@ -917,6 +1039,9 @@ class ADSClient:
             "clock_skew_ms": round(self._skew_ms, 3),
             "local_ams_net_id": self.local_net_id,
             "device_state": device_state,
+            "ethercat": self.ethercat,
+            "ethercat_ams_net_id": self.ethercat_net_id,
+            "ethercat_slaves": len(self.ethercat_snapshot.slaves) if self.ethercat_snapshot else 0,
         }
 
 

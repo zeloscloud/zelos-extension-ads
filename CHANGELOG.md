@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local AMS NetId derived from the interface toward the first target plus `.1.1` (`advanced.local_ams_net_id` overrides) on router-less platforms.
 - Demo PLC: in-process for `demo` mode on every platform, and behind AMS/TCP (`demo-server`, `just sim`) for other clients and the wire tests.
 - CLI: app mode, `demo`, `demo-server`, `trace <host> [map]`.
+- EtherCAT diagnostics per target (`ethercat`, off by default): the TwinCAT EtherCAT master read through its own ADS device (AMS port 0xFFFF on `ethercat_ams_net_id`, default the target's NetId with `.2.1`) every `advanced.ethercat_interval` (1 s). `_ethercat` carries the master state, slave count and cyclic/acyclic frame and lost-frame counters; `_ethercat/<position>_<name>` each slave's AL state, link status, `lost`, per-port CRC counters and identity, on change and every `min_update_interval`. Names and fields follow the EtherCAT extension. Actions `ethercat_slaves` and `ethercat_read_sdo` (CoE upload on the slave's station-address port; a slave without a mailbox is a clear error), both read-only. `trace --ethercat` on the CLI; the demo PLC carries a four-terminal segment.
 
 ---
 

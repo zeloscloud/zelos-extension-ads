@@ -21,7 +21,8 @@ just sim          # demo PLC behind AMS/TCP on 127.0.0.1:48898
 | `zelos_extension_ads/__init__.py` | `ACTION_PREFIX = "ADS"` - must match `name` in `extension.toml` |
 | `zelos_extension_ads/ams.py` | NetIds, router-less vs native router, the one local NetId per process, UDP 48899 identify; add route through pyads |
 | `zelos_extension_ads/symbols.py` | Symbol / datatype upload parsing, flattening, trace names, values, `SymbolFilter`, `SymbolMap`, `layout` |
-| `zelos_extension_ads/transport.py` | `Link` protocol, `PyadsLink` (pyads), error classes (`is_connection_error`, `needs_resync`) |
+| `zelos_extension_ads/transport.py` | `Link` protocol, `PyadsLink` (pyads), error classes (`is_connection_error`, `needs_resync`); `read_port` reads another AMS port over the same link |
+| `zelos_extension_ads/ethercat.py` | EtherCAT master ADS interface: index groups, state and link names, `read_snapshot`, product names, CoE SDO read and decode |
 | `zelos_extension_ads/client.py` | `ADSClient` (one target: connect, upload, transport, reconnect, rotation) and `ADSRunner` (the loop, signals, shutdown, action dispatch) |
 | `zelos_extension_ads/actions.py` | Free-function action surface + `register_actions()` |
 | `zelos_extension_ads/autoconfig.py` | `auto_config`: identify the form's targets, or broadcast for new ones |
@@ -30,6 +31,7 @@ just sim          # demo PLC behind AMS/TCP on 127.0.0.1:48898
 | `zelos_extension_ads/demo/server.py` | `DemoServer`: the demo PLC behind AMS/TCP |
 | `tests/test_symbols.py` | Tables, flattening, names, filters, values, map |
 | `tests/test_client.py` | Client through `DemoLink` (transports, map, actions, config) and over the wire (pyads: notifications, poll, recovery, start failure) |
+| `tests/test_ethercat.py` | EtherCAT trace and actions through the demo master |
 | `tests/test_hil.py` | Real target, `ZELOS_ADS_HOST` only |
 
 ## Architecture
@@ -51,6 +53,7 @@ just sim          # demo PLC behind AMS/TCP on 127.0.0.1:48898
 - Jobs on the loop: health (ReadState, logs `_target`, doubles as liveness), poll (sum read), sweep (re-read subscribed symbols silent for `min_update_interval`). Reads are by (index group, index offset, size), never by handle: nothing to release, and a stale address is an ADS error that triggers a re-upload. Writes go by symbol handle (0xF003 get, 0xF005 write and read back, 0xF006 release in a `finally`): the target resolves the name at write time.
 - Errors: router/client codes (<1792, >=1856) and OSError = link lost -> disconnect, reconnect (first loss at once, then backoff); `RESYNC_CODES` = addresses stale -> same path; other device errors count, 5 in a row reconnect. TwinCAT's symbol-version notification (0xF008) sets `_resync`.
 - Shutdown bounded by `SHUTDOWN_TIMEOUT` (3 s): notifications deleted, link closed, executor abandoned if wedged.
+- EtherCAT (`ethercat=True`): a second `Link` to the master device (`ethercat_ams_net_id`, default the target NetId with `.2.1`, AMS port 0xFFFF), opened in `_open` after the PLC link (a master that does not answer fails the connect with the fix), closed with it. One `_poll_ethercat` job on the same worker every `ethercat_interval`: `ethercat.read_snapshot` (master state 0x3/0x100, counters 0xC, count 0x6, addresses 0x7, states 0x9, identity 0x11 cached per address per connection, CRC 0x12), the `_ethercat` row every read, per-slave events declared on first sight and logged on change or every `min_update_interval`. Errors go through the job loop's classification like any request. `read_sdo` uses `Link.read_port` on the slave's station address (0xF302); ADS 13 = no mailbox.
 
 ### Actions
 
@@ -59,7 +62,7 @@ just sim          # demo PLC behind AMS/TCP on 127.0.0.1:48898
 
 ### Demo
 
-- `DemoPlc` ticks at 10 ms on its own thread; `DemoLink` drives it in-process (demo mode, fast tests). `DemoServer` speaks AMS/TCP (READ, WRITE, READWRITE incl. sum read, the three upload index groups and symbol handles (0xF003/5/6), READSTATE, READDEVICEINFO, ADD/DEL notification, DEVICENOTE push) so pyads reaches the same PLC in the wire tests; `stop()` drops its clients like a TwinCAT restart.
+- `DemoPlc` ticks at 10 ms on its own thread; `DemoLink` drives it in-process (demo mode, fast tests), `DemoLink(plc, MASTER_PORT)` its `DemoEtherCAT` segment (EK1100, EL1004, EL2004, EL3004 with CoE; `drop(address)` for tests). `DemoServer` speaks AMS/TCP (READ, WRITE, READWRITE incl. sum read, the three upload index groups and symbol handles (0xF003/5/6), READSTATE, READDEVICEINFO, ADD/DEL notification, DEVICENOTE push) so pyads reaches the same PLC in the wire tests; `stop()` drops its clients like a TwinCAT restart.
 
 ## Code Style
 

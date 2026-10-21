@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import zelos_sdk
 
 from zelos_extension_ads import ams
+from zelos_extension_ads import ethercat as ecat
 from zelos_extension_ads import symbols as sym
 from zelos_extension_ads.symbols import sanitize
 from zelos_extension_ads.transport import describe_error
@@ -166,6 +167,72 @@ def write_symbol(symbol: str, value: str, target: str = "") -> dict[str, Any]:
     started = time.monotonic()
     read_back = _run(client, client.write_value(f, typed), f"Write to '{f.symbol}'", started)
     return {"symbol": f.symbol, "type": f.type_name, "value": typed, "read_back": read_back}
+
+
+# ─── EtherCAT (the target's EtherCAT master, when enabled on it) ───────────
+
+
+@zelos_sdk.action(
+    "EtherCAT Slaves",
+    "The TwinCAT EtherCAT master's state and frame counters, and every slave's state, "
+    "link status, identity and CRC counters, read now. Needs EtherCAT diagnostics "
+    "enabled on the target.",
+    read_only=True,
+)
+@_target_field
+def ethercat_slaves(target: str = "") -> dict[str, Any]:
+    client = _get_client(target)
+    snapshot = _run(client, client.read_ethercat(), "EtherCAT read")
+    return {
+        "target": client.name,
+        "ams_net_id": client.ethercat_net_id,
+        **snapshot.as_dict(),
+        "count": len(snapshot.slaves),
+    }
+
+
+@zelos_sdk.action(
+    "EtherCAT Read SDO",
+    "Read a CoE object (SDO upload) from an EtherCAT slave through the TwinCAT master. "
+    "A slave without a mailbox (couplers, digital terminals) reports so.",
+    read_only=True,
+)
+@_target_field
+@zelos_sdk.action.text(
+    "slave",
+    title="Slave",
+    description="Position (4), trace name (4_EL3004) or station address (1004); "
+    "see ethercat_slaves",
+)
+@zelos_sdk.action.text("index", title="Index", description="e.g. 0x1018")
+@zelos_sdk.action.integer("subindex", title="Subindex", default=0, minimum=0, maximum=255)
+@zelos_sdk.action.select(
+    "data_type",
+    title="Data Type",
+    choices=list(ecat.SDO_TYPES),
+    default="auto",
+    description="How to decode the bytes; auto picks an unsigned integer by length",
+)
+def ethercat_read_sdo(
+    slave: str, index: str, subindex: int = 0, data_type: str = "auto", target: str = ""
+) -> dict[str, Any]:
+    client = _get_client(target)
+    idx = ecat.parse_index(index)
+    if data_type not in ecat.SDO_TYPES:
+        raise ValueError(f"data_type must be one of {', '.join(ecat.SDO_TYPES)}")
+    found, data = _run(
+        client, client.read_sdo(slave, idx, int(subindex)), f"SDO upload 0x{idx:04x}:{subindex}"
+    )
+    used, value = ecat.decode_sdo(data, data_type)
+    return {
+        "slave": found.trace_name,
+        "address": found.address,
+        "index": f"0x{idx:04x}",
+        "subindex": int(subindex),
+        "data_type": used,
+        "bytes": data.hex(),
+        "value": value,
+    }
 
 
 # ─── Routes (standalone: the target's router, no session) ──────────────────

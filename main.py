@@ -114,6 +114,11 @@ def demo_server(host: str, port: int) -> None:
 @click.option("--include", multiple=True, help="Symbol glob to trace (repeatable)")
 @click.option("--exclude", multiple=True, help="Symbol glob not traced (repeatable)")
 @click.option("--prefix", default="ADS", show_default=True, help="Trace prefix; empty for none")
+@click.option(
+    "--ethercat",
+    is_flag=True,
+    help="Also trace the target's EtherCAT master (NetId = target NetId with .2.1)",
+)
 def trace(
     host: str,
     symbol_map_file: str | None,
@@ -127,6 +132,7 @@ def trace(
     include: tuple[str, ...],
     exclude: tuple[str, ...],
     prefix: str,
+    ethercat: bool,
 ) -> None:
     """Trace one TwinCAT target from the command line.
 
@@ -153,6 +159,7 @@ def trace(
                     "cycle_time": cycle_time,
                     "include": list(include),
                     "exclude": list(exclude),
+                    "ethercat": ethercat,
                 }
             ],
             "advanced": {

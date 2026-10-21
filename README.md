@@ -9,6 +9,7 @@ A Zelos extension for Beckhoff TwinCAT ADS. Trace PLC variables from any TwinCAT
 - 📄 **Symbol map files**: Group and name symbols, set units and scaling in a simple JSON file
 - 🏭 **Multiple targets**: Any number in one extension; one unreachable target never stalls the others
 - ✏️ **Read, write & state actions**: Interactive symbol access and the PLC's run state from the Zelos App
+- 🔗 **EtherCAT diagnostics**: The TwinCAT EtherCAT master's state, frame counters and every slave's state, link status, identity and CRC counters; CoE reads from the app
 - 🔑 **Routes from the app**: Add this machine's route to a target with its credentials, kept nowhere
 - 🧪 **Demo mode**: Built-in demo PLC for testing without hardware
 
@@ -44,6 +45,8 @@ In the app:
 | Cycle Time | `100` ms | Change check period (notification) or poll period |
 | Transport | `notification` | `notification` (PLC pushes changes) or `poll` |
 | Include / Exclude | | Symbol globs (`MAIN.**`, `**.bDebug`) |
+| EtherCAT Diagnostics | off | Also trace the target's [EtherCAT master](#ethercat-diagnostics) |
+| EtherCAT AMS NetId | target NetId with `.2.1` | The EtherCAT device's own NetId (its EtherCAT tab in XAE) |
 
 ### Advanced
 
@@ -57,7 +60,8 @@ Applies to every target unless the target overrides it.
 | `local_ams_net_id` | derived | The one NetId this machine presents to every target (Linux, macOS); empty = local IP toward the first target + `.1.1` |
 | `transport` | `notification` | Default transport |
 | `max_notifications` | `1000` | Symbols per target above which it polls |
-| `min_update_interval` | `60` | Re-read a subscribed symbol silent this long (s) |
+| `min_update_interval` | `60` | Re-read a subscribed symbol silent this long (s); log an unchanged EtherCAT slave again this often |
+| `ethercat_interval` | `1.0` | EtherCAT master and slave read period (s) |
 | `include` / `exclude` | | Symbol globs; TwinCAT's own GVLs are excluded unless included |
 
 Every target must connect at start, or the extension stops with an error naming it. Once running, a dropped link is retried with backoff (3 s doubling to 60 s), the symbol table uploaded again and the trace resumed.
@@ -77,6 +81,17 @@ Plain ADS (TCP 48898) carries no encryption or authentication beyond the route: 
 ### Every variable
 
 A target without a symbol map traces every scalar PLC variable it holds, read-only: the event is the POU or GVL (`MAIN`, `GVL_IO`), the field the variable, struct members and array elements flattened (`stMotor_fSpeed`, `arrTemps_2`). `TwinCAT_*`, `Constants`, `Global_Version`, `LREAL_CONST` and Beckhoff library globals (`Tc2_*`, `Tc3_*`) are left out unless `include` names them.
+
+### EtherCAT diagnostics
+
+A target with EtherCAT Diagnostics on also reads the TwinCAT EtherCAT master through its own ADS device (AMS port 0xFFFF on the EtherCAT device's NetId, by convention the target's NetId with `.2.1`) every `ethercat_interval`. No PLC code or license is involved; the master is in OP whenever the I/O runs, PLC or not.
+
+| Event | Fields |
+|---|---|
+| `ADS/<target>/_ethercat` | `slaves`, `al_state`, `al_state_name`, `cyclic_frames`, `lost_frames`, `acyclic_frames`, `lost_acyclic_frames` (every read) |
+| `ADS/<target>/_ethercat/<position>_<name>` | `al_state`, `al_state_name`, `link_state`, `link_state_name`, `lost`, `crc_port_a..d`, `address`, `vendor_id`, `product_code`, `revision`, `serial` (on change, and every `min_update_interval`) |
+
+A slave is named by its bus position and product (`2_EL2004` for Beckhoff terminals; other vendors show the product code in hex). The names and fields match the EtherCAT extension's, so a TwinCAT segment and a directly driven one look alike. A master that does not answer at start stops the extension naming the NetId to set.
 
 ### Auto-configure
 
@@ -115,6 +130,8 @@ Event keys become trace events, symbols their fields. Types and addresses come f
 | `list_symbols` | Every scalar on the target and where it is traced; `pattern` filters |
 | `read_symbol` / `write_symbol` | Read or write one scalar by PLC name; the write goes by symbol handle, resolved on the target, and reads back |
 | `plc_state` | ADS state (RUN, STOP, CONFIG...) and runtime version; read-only |
+| `ethercat_slaves` | The EtherCAT master's state and counters and every slave's state, link, identity and CRC counters, read now; read-only |
+| `ethercat_read_sdo` | CoE SDO upload from a slave (`slave` by position, name or station address; `index`, `subindex`, `data_type`); a slave without a mailbox says so; read-only |
 | `add_route` | Add this machine's route to a target with a TwinCAT user name and password |
 | `auto_config` | Find targets for the config form |
 
@@ -158,6 +175,7 @@ uv run main.py demo                                              # built-in demo
 uv run main.py trace 192.168.1.10                                # every variable, NetId asked from the host
 uv run main.py trace 192.168.1.10 symbols.json --ams-net-id 5.1.2.3.1.1
 uv run main.py trace localhost --include 'MAIN.**' --transport poll -c 50
+uv run main.py trace localhost --ethercat                         # plus the EtherCAT master
 ```
 
 ## Support

@@ -46,6 +46,7 @@ ADVANCED_DEFAULTS: dict[str, Any] = {
     "transport": "notification",
     "max_notifications": 1000,
     "min_update_interval": 60.0,
+    "ethercat_interval": 1.0,
     "include": [],
     "exclude": [],
 }
@@ -61,12 +62,14 @@ TARGET_DEFAULTS: dict[str, Any] = {
     "transport": "default",
     "include": [],
     "exclude": [],
+    "ethercat": False,
+    "ethercat_ams_net_id": "",
 }
 
 TOP_LEVEL_KEYS = frozenset({"targets", "advanced"})
 
 #: Shared client settings every ADSClient takes from `advanced`.
-_SHARED = ("timeout", "max_notifications", "min_update_interval")
+_SHARED = ("timeout", "max_notifications", "min_update_interval", "ethercat_interval")
 
 
 def resolve_advanced(config: dict[str, Any]) -> dict[str, Any]:
@@ -143,6 +146,8 @@ def resolve_targets(config: dict[str, Any], advanced: dict[str, Any]) -> list[di
                 "port": int(target["port"]),
                 "symbol_map_file": target["symbol_map_file"],
                 "cycle_time": int(target["cycle_time"]),
+                "ethercat": bool(target["ethercat"]),
+                "ethercat_ams_net_id": str(target["ethercat_ams_net_id"]).strip(),
                 **_inherit(target, advanced),
                 **{k: advanced[k] for k in _SHARED},
             }
@@ -292,13 +297,18 @@ def run_config(config: dict[str, Any], demo: bool = False) -> None:
 
     if demo:
         from zelos_extension_ads.demo import DEMO_NET_ID, DemoLink, DemoPlc
+        from zelos_extension_ads.ethercat import MASTER_PORT
 
-        logger.info("Demo mode: using the built-in demo PLC")
-        config = {**config, "targets": [{"name": DEMO_NAME, "ams_net_id": DEMO_NET_ID}]}
+        logger.info("Demo mode: using the built-in demo PLC and its EtherCAT segment")
+        config = {
+            **config,
+            "targets": [{"name": DEMO_NAME, "ams_net_id": DEMO_NET_ID, "ethercat": True}],
+        }
     targets = resolve_targets(config, advanced)
     if demo:
         plc = DemoPlc()
         targets[0]["link_factory"] = lambda: DemoLink(plc)
+        targets[0]["ethercat_link_factory"] = lambda: DemoLink(plc, MASTER_PORT)
 
     serve(build_clients(targets), prefix, str(advanced["local_ams_net_id"]).strip())
 

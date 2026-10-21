@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from pyads.pyads_ex import ADSError
 
+from zelos_extension_ads import ethercat as ecat
 from zelos_extension_ads import symbols as sym
 from zelos_extension_ads.symbols import SymbolEntry, TypeEntry
 from zelos_extension_ads.transport import (
@@ -26,6 +27,7 @@ from zelos_extension_ads.transport import (
 )
 
 DEMO_NET_ID = "192.168.100.10.1.1"
+DEMO_ECAT_NET_ID = ecat.ethercat_net_id(DEMO_NET_ID)
 DEMO_HOST = "127.0.0.1"
 DEMO_PORT = 851
 TASK_SECONDS = 0.01
@@ -97,12 +99,107 @@ class _Sub:
 
 
 @dataclass
+class DemoSlave:
+    address: int
+    vendor_id: int
+    product_code: int
+    revision: int
+    al_state: int = 0x08
+    link_state: int = 0x00
+    # CoE objects by (index, subindex); None: no mailbox (couplers, digital terminals).
+    coe: dict[tuple[int, int], bytes] | None = None
+
+
+class DemoEtherCAT:
+    """The demo's EtherCAT segment behind the master port: EK1100 + EL1004 + EL2004 +
+    EL3004 in OP, one cyclic frame per task cycle, one acyclic frame per master read."""
+
+    def __init__(self) -> None:
+        self.al_state = 0x08
+        self.cyclic = 0
+        self.acyclic = 0
+        self.slaves = [
+            DemoSlave(1001, 2, 0x044C2C52, 0x00120000),
+            DemoSlave(1002, 2, 0x03EC3052, 0x00100000),
+            DemoSlave(1003, 2, 0x07D43052, 0x00100000),
+            DemoSlave(
+                1004,
+                2,
+                0x0BBC3052,
+                0x00140000,
+                coe={
+                    (0x1008, 0): b"EL3004",
+                    (0x1018, 1): struct.pack("<I", 2),
+                    (0x1018, 2): struct.pack("<I", 0x0BBC3052),
+                    (0x1018, 3): struct.pack("<I", 0x00140000),
+                },
+            ),
+        ]
+        self.slaves[-1].link_state = 0x20  # port B: end of the segment
+
+    def step(self) -> None:
+        self.cyclic = (self.cyclic + 1) & 0xFFFFFFFF
+
+    def drop(self, address: int) -> None:
+        """The slave at `address` falls off the bus."""
+        slave = self._slave(address)
+        slave.al_state, slave.link_state = 0x00, 0x01
+
+    def _slave(self, address: int) -> DemoSlave:
+        found = next((s for s in self.slaves if s.address == address), None)
+        if found is None:
+            raise ADSError(1796)  # invalid index offset
+        return found
+
+    def read(self, group: int, offset: int, size: int) -> bytes:
+        """The master port's index groups, as TwinCAT lays them out."""
+        self.acyclic = (self.acyclic + 1) & 0xFFFFFFFF
+        if group == ecat.IG_MASTER_STATE and offset == ecat.IO_MASTER_STATE:
+            data = struct.pack("<H", self.al_state)
+        elif group == ecat.IG_SLAVE_COUNT:
+            data = struct.pack("<I", len(self.slaves))
+        elif group == ecat.IG_SLAVE_ADDRESSES:
+            data = b"".join(struct.pack("<H", s.address) for s in self.slaves)
+        elif group == ecat.IG_SLAVE_STATES and offset == 0:
+            data = b"".join(bytes((s.al_state, s.link_state)) for s in self.slaves)
+        elif group == ecat.IG_FRAME_COUNTERS:
+            ticks = int(time.monotonic() * 1e7) & 0xFFFFFFFF  # 100 ns, 32-bit as TwinCAT
+            data = struct.pack("<5I", ticks, self.cyclic, 0, self.acyclic, 0)
+        elif group == ecat.IG_IDENTITY:
+            s = self._slave(offset)
+            data = struct.pack("<4I", s.vendor_id, s.product_code, s.revision, 0)
+        elif group == ecat.IG_CRC:
+            self._slave(offset)
+            data = bytes(16)
+        else:
+            raise ADSError(1793)  # service not supported
+        if size < len(data):
+            raise ADSError(1797)  # parameter size not correct
+        return data.ljust(size, b"\0")
+
+    def read_port(self, ams_port: int, group: int, offset: int, size: int) -> bytes:
+        """A slave's port: CoE SDO upload."""
+        slave = next((s for s in self.slaves if s.address == ams_port), None)
+        if slave is None:
+            raise ADSError(6)  # target port not found
+        if group != ecat.IG_COE_SDO:
+            raise ADSError(1793)
+        if slave.coe is None:
+            raise ADSError(ecat.ADS_PORT_NOT_CONNECTED)
+        data = slave.coe.get((offset >> 16, offset & 0xFF))
+        if data is None:
+            raise ADSError(1796)
+        return data[:size]
+
+
+@dataclass
 class DemoPlc:
     """The program: a cycle counter, a sine, two outputs, a motor struct, an array,
     a string, one GVL, a pointer (skipped) and TwinCAT's own system info (excluded)."""
 
     types: dict[str, TypeEntry] = field(default_factory=demo_types)
     vars: dict[str, _Var] = field(default_factory=dict)
+    ethercat: DemoEtherCAT = field(default_factory=DemoEtherCAT)
     _subs: dict[int, _Sub] = field(default_factory=dict)
     _handles: dict[int, str] = field(default_factory=dict)  # symbol handle -> name
     _next: int = 1
@@ -165,6 +262,7 @@ class DemoPlc:
         """One task cycle at program time `t` (seconds)."""
         with self._lock:
             self._cycle += 1
+            self.ethercat.step()
             self._poke("MAIN.nCycle", 0, struct.pack("<I", self._cycle & 0xFFFFFFFF))
             self._poke("MAIN.fSine", 0, struct.pack("<d", math.sin(t)))
             speed = 1500.0 + 500.0 * math.sin(t / 5.0)
@@ -356,10 +454,12 @@ def encode_type(t: TypeEntry) -> bytes:
 
 
 class DemoLink:
-    """A `Link` onto a `DemoPlc` in this process."""
+    """A `Link` onto a `DemoPlc` in this process: the PLC runtime (851), or its
+    EtherCAT master (`ecat.MASTER_PORT`), which answers reads and ReadState only."""
 
-    def __init__(self, plc: DemoPlc) -> None:
+    def __init__(self, plc: DemoPlc, port: int = DEMO_PORT) -> None:
         self.plc = plc
+        self.port = port
         self._open = False
 
     def open(self) -> None:
@@ -374,24 +474,40 @@ class DemoLink:
             raise ADSError(1864)
         return self.plc
 
+    def _require_plc(self) -> DemoPlc:
+        plc = self._require()
+        if self.port != DEMO_PORT:
+            raise ADSError(1793)  # service not supported by the master port
+        return plc
+
     def read_state(self) -> tuple[int, int]:
-        return self._require().read_state()
+        plc = self._require()
+        return plc.read_state() if self.port == DEMO_PORT else (0, 0)
 
     def device_info(self) -> tuple[str, str]:
-        return self._require().device_info()
+        return self._require_plc().device_info()
 
     def upload(self) -> tuple[bytes, bytes]:
-        plc = self._require()
+        plc = self._require_plc()
         return plc.symbol_table(), plc.type_table()
 
     def read(self, group: int, offset: int, size: int) -> bytes:
-        return self._require().read(group, offset, size)
+        plc = self._require()
+        if self.port == ecat.MASTER_PORT:
+            with plc._lock:
+                return plc.ethercat.read(group, offset, size)
+        return plc.read(group, offset, size)
+
+    def read_port(self, ams_port: int, group: int, offset: int, size: int) -> bytes:
+        plc = self._require()
+        with plc._lock:
+            return plc.ethercat.read_port(ams_port, group, offset, size)
 
     def write(self, group: int, offset: int, data: bytes) -> None:
-        self._require().write(group, offset, data)
+        self._require_plc().write(group, offset, data)
 
     def write_by_name(self, name: str, data: bytes) -> bytes:
-        plc = self._require()
+        plc = self._require_plc()
         handle = plc.get_handle(name)
         try:
             plc.write(ADSIGRP_SYM_VALBYHND, handle, data)
@@ -400,9 +516,9 @@ class DemoLink:
             plc.release_handle(handle)
 
     def sum_read(self, items: Sequence[tuple[int, int, int]]) -> list[bytes | int]:
-        return self._require().sum_read(items)
+        return self._require_plc().sum_read(items)
 
     def subscribe(
         self, group: int, offset: int, size: int, cycle_ms: int, callback: NotifyCallback
     ) -> int:
-        return self._require().subscribe(group, offset, size, cycle_ms, callback)
+        return self._require_plc().subscribe(group, offset, size, cycle_ms, callback)

@@ -56,6 +56,7 @@ class Link(Protocol):
     def subscribe(
         self, group: int, offset: int, size: int, cycle_ms: int, callback: NotifyCallback
     ) -> int: ...
+    def read_port(self, ams_port: int, group: int, offset: int, size: int) -> bytes: ...
 
 
 def filetime_ns(filetime: int) -> int:
@@ -183,6 +184,26 @@ class PyadsLink:
         )
         self._handles.add(handle)
         return handle
+
+    def read_port(self, ams_port: int, group: int, offset: int, size: int) -> bytes:
+        """Read from another AMS port of the same device over this link's port and
+        route: up to `size` bytes, as many as the device returned."""
+        plc = self._require()
+        address = pyads.AmsAddr(self.net_id, ams_port).amsAddrStruct()
+        data = (ctypes.c_ubyte * size)()
+        read = ctypes.c_ulong()
+        error = pyads_ex._adsDLL.AdsSyncReadReqEx2(
+            plc._port,
+            ctypes.pointer(address),
+            ctypes.c_ulong(group),
+            ctypes.c_ulong(offset),
+            ctypes.c_ulong(size),
+            ctypes.pointer(data),
+            ctypes.pointer(read),
+        )
+        if error:
+            raise ADSError(error)
+        return bytes(data)[: read.value]
 
     @staticmethod
     def _dispatch(callback: NotifyCallback, notification: Any, _data: Any) -> None:
