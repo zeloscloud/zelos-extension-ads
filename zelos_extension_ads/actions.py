@@ -205,11 +205,14 @@ def ethercat_slaves(target: str = "") -> dict[str, Any]:
     "see ethercat_slaves",
 )
 @zelos_sdk.action.text("index", title="Index", description="e.g. 0x1018")
-@zelos_sdk.action.integer("subindex", title="Subindex", default=0, minimum=0, maximum=255)
+@zelos_sdk.action.integer(
+    "subindex", title="Subindex", required=False, default=0, minimum=0, maximum=255
+)
 @zelos_sdk.action.select(
     "data_type",
     title="Data Type",
     choices=list(ecat.SDO_TYPES),
+    required=False,
     default="auto",
     description="How to decode the bytes; auto picks an unsigned integer by length",
 )
