@@ -14,6 +14,7 @@ import zelos_sdk
 
 from zelos_extension_ads import actions
 from zelos_extension_ads.ams import ADS_TCP_PORT
+from zelos_extension_ads.cli.app import set_local_router
 from zelos_extension_ads.client import ADSClient, ADSRunner, SharedSource
 from zelos_extension_ads.demo.plc import DEMO_NET_ID, DemoPlc
 from zelos_extension_ads.demo.server import DemoServer
@@ -84,7 +85,9 @@ def wire_client(**kwargs: Any) -> ADSClient:
 
 @contextlib.asynccontextmanager
 async def running(client: ADSClient, prefix: str = "ADS") -> AsyncIterator[tuple[ADSRunner, Rows]]:
-    """`client` started on the prefix's layout and run in a runner; stopped on exit."""
+    """`client` started on the prefix's layout and run in a runner, as `serve` does;
+    stopped on exit."""
+    set_local_router([client])
     client.start(SharedSource(zelos_sdk.TraceSource(prefix)) if prefix else None)
     rows = Rows(client)
     runner = ADSRunner([client])

@@ -311,9 +311,7 @@ def decode(data: bytes, data_type: int, scale: float = 1.0) -> Any:
     if len(data) < size:
         return None
     value = struct.unpack_from(fmt, data)[0]
-    if data_type == ADST_BIT:
-        return bool(data[0])
-    if scale != 1.0 and data_type not in (ADST_BIT,):
+    if scale != 1.0 and data_type != ADST_BIT:
         return value * scale
     return value
 

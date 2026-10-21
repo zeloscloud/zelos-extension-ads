@@ -10,8 +10,8 @@ import contextlib
 import ctypes
 import logging
 import struct
-import threading
 from collections.abc import Callable, Sequence
+from functools import partial
 from typing import Any, Protocol
 
 import pyads
@@ -20,10 +20,10 @@ from pyads.ads import linux as ROUTERLESS
 from pyads.pyads_ex import ADSError
 from pyads.structs import SAdsSumRequest
 
-from zelos_extension_ads import ams
-
 logger = logging.getLogger(__name__)
 
+# ADS index groups.
+ADSIGRP_SYM_VERSION = 0xF008  # one byte TwinCAT bumps per online change
 ADSIGRP_SYM_UPLOAD = 0xF00B
 ADSIGRP_SYM_DT_UPLOAD = 0xF00E
 ADSIGRP_SYM_UPLOADINFO2 = 0xF00F
@@ -32,7 +32,7 @@ ADSIGRP_SUMUP_READ = 0xF080
 SUM_CHUNK = 500
 
 # Windows FILETIME (100 ns since 1601) -> Unix ns.
-_FILETIME_EPOCH = 116444736000000000
+FILETIME_EPOCH = 116444736000000000
 
 #: A notification's data and its PLC timestamp (Unix ns).
 NotifyCallback = Callable[[int, bytes], None]
@@ -52,11 +52,10 @@ class Link(Protocol):
     def subscribe(
         self, group: int, offset: int, size: int, cycle_ms: int, callback: NotifyCallback
     ) -> int: ...
-    def unsubscribe(self, handle: int) -> None: ...
 
 
 def filetime_ns(filetime: int) -> int:
-    return (filetime - _FILETIME_EPOCH) * 100
+    return (filetime - FILETIME_EPOCH) * 100
 
 
 class PyadsLink:
@@ -65,9 +64,7 @@ class PyadsLink:
     def __init__(self, host: str, net_id: str, port: int, timeout: float) -> None:
         self.host, self.net_id, self.port, self.timeout = host, net_id, port, timeout
         self._plc: pyads.Connection | None = None
-        # notification handle -> (user handle, callback)
-        self._subs: dict[int, tuple[int, NotifyCallback]] = {}
-        self._lock = threading.Lock()
+        self._handles: set[int] = set()  # notifications registered on the target
 
     def open(self) -> None:
         plc = pyads.Connection(self.net_id, self.port, self.host)
@@ -87,15 +84,14 @@ class PyadsLink:
         plc, self._plc = self._plc, None
         if plc is None:
             return
-        with self._lock:
-            subs, self._subs = self._subs, {}
+        handles, self._handles = self._handles, set()
         port, plc._port, plc._open = plc._port, None, False
         if port is not None:
             with contextlib.suppress(ADSError, OSError):
                 pyads_ex.adsPortCloseEx(port)
         # pyads keeps every notification's C callback in a process-wide store that only
         # `del_device_notification` prunes; the port is closed, so no callback can fire.
-        for handle in subs:
+        for handle in handles:
             pyads_ex.callback_store.pop((plc._adr, handle), None)
         if ROUTERLESS:
             with contextlib.suppress(ADSError, OSError):
@@ -160,27 +156,19 @@ class PyadsLink:
     ) -> int:
         plc = self._require()
         attrib = pyads.NotificationAttrib(size, pyads.ADSTRANS_SERVERONCHA, cycle_ms, cycle_ms)
-        handle, user = plc.add_device_notification((group, offset), attrib, self._dispatch)
-        with self._lock:
-            self._subs[handle] = (user, callback)
+        handle, _ = plc.add_device_notification(
+            (group, offset), attrib, partial(self._dispatch, callback)
+        )
+        self._handles.add(handle)
         return handle
 
-    def unsubscribe(self, handle: int) -> None:
-        with self._lock:
-            user, _ = self._subs.pop(handle, (None, None))
-        if user is not None and self._plc is not None:
-            self._plc.del_device_notification(handle, user)
-
-    def _dispatch(self, notification: Any, _data: Any) -> None:
+    @staticmethod
+    def _dispatch(callback: NotifyCallback, notification: Any, _data: Any) -> None:
         header = notification.contents
-        with self._lock:
-            sub = self._subs.get(header.hNotification)
-        if sub is None:
-            return
         data = ctypes.string_at(
             ctypes.addressof(header) + type(header).data.offset, header.cbSampleSize
         )
-        sub[1](filetime_ns(header.nTimeStamp), data)
+        callback(filetime_ns(header.nTimeStamp), data)
 
 
 def describe_error(error: BaseException) -> str:
@@ -204,11 +192,3 @@ RESYNC_CODES = frozenset({1794, 1795, 1808, 1809, 1812, 1826})
 
 def needs_resync(error: BaseException) -> bool:
     return isinstance(error, ADSError) and getattr(error, "err_code", None) in RESYNC_CODES
-
-
-def local_router(host: str, local_net_id: str) -> str:
-    """Prepare the local side for `host`: on a router-less platform the AdsLib NetId
-    (`local_net_id`, or derived); nothing on a TwinCAT router. Returns the NetId used."""
-    if ams.native_router():
-        return ""
-    return ams.ensure_local_router(local_net_id or ams.derive_local_net_id(host))

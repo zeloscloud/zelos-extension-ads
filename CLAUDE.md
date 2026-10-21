@@ -19,7 +19,7 @@ just sim          # demo PLC behind AMS/TCP on 127.0.0.1:48898
 |------|------|
 | `main.py` | Click entry point; re-exports `ACTION_PREFIX` |
 | `zelos_extension_ads/__init__.py` | `ACTION_PREFIX = "Beckhoff ADS"` - must match `name` in `extension.toml` |
-| `zelos_extension_ads/ams.py` | NetIds, router-less vs native router, local NetId derivation, UDP 48899 identify and add-route frames |
+| `zelos_extension_ads/ams.py` | NetIds, router-less vs native router, the one local NetId per process, UDP 48899 identify; add route through pyads |
 | `zelos_extension_ads/symbols.py` | Symbol / datatype upload parsing, flattening, trace names, values, `SymbolFilter`, `SymbolMap`, `layout` |
 | `zelos_extension_ads/transport.py` | `Link` protocol, `PyadsLink` (pyads), error classes (`is_connection_error`, `needs_resync`) |
 | `zelos_extension_ads/client.py` | `ADSClient` (one target: connect, upload, transport, reconnect, rotation) and `ADSRunner` (the loop, signals, shutdown, action dispatch) |
@@ -41,13 +41,13 @@ just sim          # demo PLC behind AMS/TCP on 127.0.0.1:48898
 
 ### Platforms
 
-- `pyads.ads.linux` decides: True = router-less AdsLib (Linux, macOS): `ensure_local_router` opens the port once per process and sets the local NetId (`advanced.local_ams_net_id`, else the IP toward the first target + `.1.1`); `pyads.Connection.open()` adds the route to the target IP. The target must hold a route back (`add_route` action).
+- `pyads.ads.linux` decides: True = router-less AdsLib (Linux, macOS): `serve()` calls `ensure_local_router` once, before any client starts, which opens the port and sets the local NetId (`advanced.local_ams_net_id`, else the IP toward the first target + `.1.1`); every client presents it. `pyads.Connection.open()` adds the route to the target IP. The target must hold a route back (`add_route` action, which uses the running NetId when there is one).
 - False = TwinCAT's router (Beckhoff RT Linux is detected by `/usr/bin/TcSystemServiceUm`; Windows): no local NetId, no routes from here, `set_local_address` raises. Demo mode still works (in-process link); `demo-server` cannot be reached through that router.
 
 ### Client
 
 - pyads blocks: every link call runs on the client's one worker thread (`_call`); notifications arrive on AdsLib's thread and are queued, then flushed on the loop after `FLUSH_SECONDS` into one row per (event, PLC timestamp).
-- Per connect: `_open` (resolve NetId by UDP identify when empty, open, ReadState, device info) -> upload both tables -> `flatten` -> map or filters -> `layout` -> `_declare_events` (added fields rotate the shared source, OPC UA's `_rotate_source`) -> `_start_transport`.
+- Per connect: `_open` (resolve the target NetId by UDP identify when empty, open, ReadState, device info) -> upload both tables -> `flatten` -> map or filters -> `layout` -> `_declare_events` (added fields rotate the shared source, OPC UA's `_rotate_source`) -> `_start_transport`.
 - Jobs on the loop: health (ReadState, logs `_target`, doubles as liveness), poll (sum read), sweep (re-read subscribed symbols silent for `min_update_interval`). Reads are by (index group, index offset, size), never by handle: nothing to release, and a stale address is an ADS error that triggers a re-upload.
 - Errors: router/client codes (<1792, >=1856) and OSError = link lost -> disconnect, reconnect (first loss at once, then backoff); `RESYNC_CODES` = addresses stale -> same path; other device errors count, 5 in a row reconnect. TwinCAT's symbol-version notification (0xF008) sets `_resync`.
 - Shutdown bounded by `SHUTDOWN_TIMEOUT` (3 s): notifications deleted, link closed, executor abandoned if wedged.

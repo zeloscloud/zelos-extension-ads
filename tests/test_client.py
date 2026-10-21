@@ -18,7 +18,7 @@ from zelos_extension_ads.client import ADSClient, ADSRunner, SharedSource
 from zelos_extension_ads.demo.plc import DEMO_NET_ID, DemoLink, DemoPlc
 from zelos_extension_ads.demo.server import DemoServer
 from zelos_extension_ads.symbols import HEALTH_EVENT, SymbolMap
-from zelos_extension_ads.transport import is_connection_error, needs_resync
+from zelos_extension_ads.transport import ADSIGRP_SYM_VERSION, is_connection_error, needs_resync
 
 _ = server  # fixture
 
@@ -80,22 +80,12 @@ async def test_symbol_map_names_and_scales():
 
 
 async def test_poll_resyncs_on_symbol_version_change(caplog):
-    """Polled addresses go stale silently: the health probe reads 0xF008 and reconnects."""
+    """Polled addresses go stale silently: a write checks 0xF008 first and is refused,
+    the client uploads the table again, then the write goes through."""
     plc = DemoPlc()
     client = demo_client(plc, transport="poll")
     async with running(client):
         await wait_until(lambda: client._poll_count >= 2, 10.0)
-        plc.online_change()
-        await wait_until(lambda: "main.nadded" in client._uploaded, 10.0)
-        assert client._connected and client._version == plc.read(0xF008, 0, 1)
-    assert "symbol table changed; uploading the symbol table again" in caplog.text
-
-
-async def test_write_refused_after_symbol_version_change():
-    plc = DemoPlc()
-    client = demo_client(plc, transport="poll")
-    async with running(client):
-        await wait_until(lambda: client._connected, 10.0)
         f = client.field("MAIN.bOut1")
         plc.online_change()
         with pytest.raises(RuntimeError, match="symbol table changed"):
@@ -104,8 +94,10 @@ async def test_write_refused_after_symbol_version_change():
         with pytest.raises(RuntimeError, match="symbol table changed"):
             await client.read_value(f)
         await wait_until(lambda: "main.nadded" in client._uploaded, 10.0)
+        assert client._connected and client._version == plc.read(ADSIGRP_SYM_VERSION, 0, 1)
         assert await client.write_value(client.field("MAIN.bOut1"), True) is True
         await client.write_value(client.field("MAIN.bOut1"), False)
+    assert "symbol table changed; uploading the symbol table again" in caplog.text
 
 
 async def test_actions_read_write_state_and_selection():
@@ -143,7 +135,7 @@ def test_config_resolution_follows_advanced():
     config = {
         "targets": [
             {"host": "10.1.1.165", "transport": "poll", "include": ["MAIN.*"]},
-            {"name": "cx", "host": "cx9240", "ams_net_id": "5.1.2.3.1.1", "port": 852},
+            {"name": "cx", "host": "plc1", "ams_net_id": "5.1.2.3.1.1", "port": 852},
         ],
         "advanced": {"transport": "notification", "exclude": ["**.bDebug"], "timeout": 2.0},
     }

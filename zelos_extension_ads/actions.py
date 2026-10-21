@@ -18,6 +18,7 @@ import zelos_sdk
 
 from zelos_extension_ads import ams
 from zelos_extension_ads import symbols as sym
+from zelos_extension_ads.symbols import sanitize
 from zelos_extension_ads.transport import describe_error
 
 if TYPE_CHECKING:
@@ -51,21 +52,25 @@ def _get_client(target: str = "") -> ADSClient:
             return next(iter(clients.values()))
         raise ValueError(f"Several targets are configured; set target to one of: {names}")
     # Sanitized like the configured names, so `192.168.1.10` finds `192_168_1_10`.
-    client = clients.get(zelos_sdk.sanitize_name(target.strip(), kind="source"))
+    client = clients.get(sanitize(target.strip(), "source"))
     if client is None:
         raise ValueError(f"Unknown target '{target}'. Targets: {names}")
     return client
 
 
-def _run(client: ADSClient, coro: Any, what: str, sent: list[float] | None = None) -> Any:
-    """Dispatch an action coroutine; anything not self-describing becomes a RuntimeError."""
+def _run(client: ADSClient, coro: Any, what: str, started: float | None = None) -> Any:
+    """Dispatch an action coroutine; anything not self-describing becomes a RuntimeError.
+
+    `started` marks a write: on a timeout the request is still queued behind the
+    worker's current call, or sent and unanswered, so it may yet be applied.
+    """
     try:
         return _get_runner()._run_coro(coro, client.timeout + 1.0)
     except Exception as e:
-        if sent and isinstance(e, TimeoutError):
+        if started is not None and isinstance(e, TimeoutError):
             raise TimeoutError(
-                f"{what} was sent; no response within {time.monotonic() - sent[0]:.1f}s; "
-                "the target may have applied it - read the symbol to confirm"
+                f"{what}: no response within {time.monotonic() - started:.1f}s; the target "
+                "may still apply it, read the symbol to confirm"
             ) from e
         if isinstance(e, ValueError | RuntimeError | TimeoutError | OSError):
             raise
@@ -153,8 +158,8 @@ def write_symbol(symbol: str, value: str, target: str = "") -> dict[str, Any]:
     client = _get_client(target)
     f = client.field(symbol)
     typed = sym.coerce_text(str(value), f.data_type)
-    sent = [time.monotonic()]
-    read_back = _run(client, client.write_value(f, typed), f"Write to '{f.symbol}'", sent)
+    started = time.monotonic()
+    read_back = _run(client, client.write_value(f, typed), f"Write to '{f.symbol}'", started)
     return {"symbol": f.symbol, "type": f.type_name, "value": typed, "read_back": read_back}
 
 
@@ -186,8 +191,9 @@ def write_symbol(symbol: str, value: str, target: str = "") -> dict[str, Any]:
     title="Local AMS NetId",
     required=False,
     default="",
-    description="The NetId to route to this machine; empty derives it as the extension does "
-    "(Advanced > Local AMS NetId, else local IP + .1.1)",
+    description="The NetId to route to this machine; empty uses the one the running "
+    "extension presents, else derives it as it would (Advanced > Local AMS NetId, else "
+    "this machine's IP toward the target + .1.1)",
 )
 @zelos_sdk.action.text(
     "route_name",
@@ -210,7 +216,11 @@ def add_route(
             "`adstool <host> addroute`; this action is for machines without one"
         )
     local_host = ams.outbound_ip(host)
-    net_id = ams.parse_net_id(local_ams_net_id or _advanced_local_net_id() or local_host + ".1.1")
+    # Running, the process presents one NetId: that is the one to route, whatever
+    # interface `host` sits on; stopped, derive it as the next start will.
+    net_id = ams.parse_net_id(
+        local_ams_net_id or ams.local_net_id() or _advanced_local_net_id() or local_host + ".1.1"
+    )
     name = route_name.strip() or socket.gethostname()
     try:
         added = ams.add_route(host, username, password, net_id, local_host, name)

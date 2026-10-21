@@ -12,9 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import zelos_sdk
-
 from zelos_extension_ads import ams
+from zelos_extension_ads.symbols import sanitize
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ IDENTIFY_SECONDS = 2.0
 
 def _entry(device: ams.Device, taken: set[str]) -> dict[str, Any]:
     label = device.name or device.host
-    name = base = zelos_sdk.sanitize_name(label, kind="source")
+    name = base = sanitize(label, "source")
     k = 2
     while name in taken:
         name, k = f"{base}_{k}", k + 1

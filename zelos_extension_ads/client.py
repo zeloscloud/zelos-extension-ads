@@ -27,11 +27,11 @@ from zelos_extension_ads import ams
 from zelos_extension_ads import symbols as sym
 from zelos_extension_ads.symbols import HEALTH_EVENT, Field, SymbolFilter, SymbolMap
 from zelos_extension_ads.transport import (
+    ADSIGRP_SYM_VERSION,
     Link,
     PyadsLink,
     describe_error,
     is_connection_error,
-    local_router,
     needs_resync,
 )
 
@@ -51,9 +51,8 @@ HEALTH_INTERVAL = 1.0
 FLUSH_SECONDS = 0.02
 # Staleness sweep steps per min_update_interval.
 SWEEP_STEPS = 4
-# ADS index group of the symbol version (one byte): read with every health probe and
-# subscribed in notification mode; a change means the addresses held are stale.
-ADSIGRP_SYM_VERSION = 0xF008
+# The symbol version is read with every health probe and subscribed in notification
+# mode; a change means the addresses held are stale.
 STALE_TABLE = "symbol table changed"
 
 ADS_STATES = {
@@ -95,8 +94,8 @@ class StaleTableError(RuntimeError):
 
 
 def default_target_name(host: str) -> str:
-    """The host as a trace name: `cx9240`, `192_168_1_10`."""
-    return zelos_sdk.sanitize_name(host.strip() or "localhost", kind="source")
+    """The host as a trace name: `plc1`, `192_168_1_10`."""
+    return sym.sanitize(host.strip() or "localhost", "source")
 
 
 class _TargetLog(logging.LoggerAdapter):
@@ -158,7 +157,6 @@ class ADSClient:
         exclude: Sequence[str] = (),
         max_notifications: int = 1000,
         min_update_interval: float = 60.0,
-        local_ams_net_id: str = "",
         link_factory: Callable[[], Link] | None = None,
     ) -> None:
         """
@@ -175,11 +173,10 @@ class ADSClient:
             exclude: Without a map, symbol globs not traced; win over include
             max_notifications: Symbols above which the notification transport polls
             min_update_interval: A subscribed symbol silent this long is re-read
-            local_ams_net_id: Router-less platforms: the NetId presented; empty derives it
             link_factory: Makes the link (tests, demo); default pyads
 
         Raises:
-            ValueError: If the transport, filters or NetIds are invalid
+            ValueError: If the transport, filters or NetId are invalid
         """
         if transport not in TRANSPORTS:
             raise ValueError(f"transport must be one of {', '.join(TRANSPORTS)}, got '{transport}'")
@@ -189,8 +186,6 @@ class ADSClient:
             raise ValueError(f"min_update_interval must be positive, got {min_update_interval}")
         if ams_net_id:
             ams_net_id = ams.parse_net_id(ams_net_id)
-        if local_ams_net_id:
-            local_ams_net_id = ams.parse_net_id(local_ams_net_id)
         self.host = host.strip() or "localhost"
         self.name = name or default_target_name(self.host)
         self.ams_net_id = ams_net_id
@@ -202,7 +197,6 @@ class ADSClient:
         self.filters = SymbolFilter.parse(include, exclude)
         self.max_notifications = max_notifications
         self.min_update_interval = min_update_interval
-        self.local_ams_net_id = local_ams_net_id
         self._link_factory = link_factory
         self._log = _TargetLog(logger, {"target": self.name})
 
@@ -219,7 +213,7 @@ class ADSClient:
         self._at_start = False
         self._contacted = asyncio.Event()
         self.net_id = ams_net_id  # resolved per connect when empty
-        self.local_net_id = ""
+        self.local_net_id = ""  # the NetId this process presents (set once, before start)
         self.device = ("", "")  # name, version
         self.plc_state = (0, 0)
 
@@ -247,7 +241,7 @@ class ADSClient:
         self._shared: SharedSource | None = None
         self._trace_events: dict[str, Any] = {}
         self._declared: dict[str, list[Declared]] = {}
-        self._schemas: dict[str, dict[str, int]] = {}
+        self._schemas: dict[str, dict[str, zelos_sdk.DataType]] = {}
         self._event_prefix = ""
 
     # ─── Trace source ───────────────────────────────────────────────────────
@@ -287,16 +281,16 @@ class ADSClient:
         for event, fields in events.items():
             schema = self._schemas.get(event)
             if schema is None:
-                self._schemas[event] = {f.name: f.data_type for f in fields}
+                self._schemas[event] = {f.name: f.datatype for f in fields}
                 self._declare(event, [_field(f) for f in fields])
                 continue
             keep = []
             for f in fields:
-                if schema.get(f.name, f.data_type) != f.data_type:
+                if schema.get(f.name, f.datatype) != f.datatype:
                     changed.append(f.key)
                     continue
                 if f.name not in schema:
-                    schema[f.name] = f.data_type
+                    schema[f.name] = f.datatype
                     self._declared[event].append(_field(f))
                     added.append(f.key)
                 keep.append(f)
@@ -354,12 +348,10 @@ class ADSClient:
             self.in_call = False
 
     def _open(self) -> None:
-        """Worker thread: local router, NetId, link, first request."""
+        """Worker thread: NetId, link, first request."""
         net_id = self.ams_net_id
-        if self._link_factory is None:
-            self.local_net_id = local_router(self.host, self.local_ams_net_id)
         if not net_id and self._link_factory is None:
-            device = ams.identify_one(self.host, min(self.timeout, 3.0))
+            device = next(iter(ams.identify([self.host], min(self.timeout, 3.0))), None)
             if device is None:
                 raise ConnectError(
                     f"no TwinCAT router answered at {self.host} (UDP 48899)",
@@ -528,7 +520,6 @@ class ADSClient:
             )
             self._active = "poll"
         if self._active == "notification":
-            self._loop = asyncio.get_running_loop()
             self._polled = await self._call(self._subscribe_all, fields)
             with contextlib.suppress(Exception):
                 await self._call(
@@ -576,9 +567,7 @@ class ADSClient:
     def _on_notification(self, f: Field, stamp_ns: int, data: bytes) -> None:
         """ADS receive thread: queue and wake the loop."""
         self._pending.append((f, stamp_ns, data))
-        loop = self._loop
-        if loop is not None and not loop.is_closed():
-            loop.call_soon_threadsafe(self._kick)
+        self._wake()
 
     def _read_version(self) -> bytes | None:
         """Worker thread: the symbol version, None on a target without one (logged once)."""
@@ -603,18 +592,26 @@ class ADSClient:
         """ADS receive thread: the loop reconnects on a change."""
         if self._changed(data):
             self._resync = STALE_TABLE
-            loop = self._loop
-            if loop is not None and not loop.is_closed():
-                loop.call_soon_threadsafe(self._kick)
+            self._wake()
+
+    def _wake(self) -> None:
+        """Any thread: have the loop flush after FLUSH_SECONDS."""
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._kick)
 
     def _kick(self) -> None:
         if self._flush_handle is None and self._loop is not None:
             self._flush_handle = self._loop.call_later(FLUSH_SECONDS, self._flush)
 
     def _flush(self) -> None:
-        """Log the queued notifications: one row per event and PLC timestamp."""
+        """Log the queued notifications: one row per event and PLC timestamp.
+
+        Gated on the link, not `_connected`: the first notifications arrive while
+        the connect is still subscribing.
+        """
         self._flush_handle = None
-        if not self._connected:
+        if self._link is None:
             self._pending.clear()
             return
         rows: dict[tuple[str, int], dict[str, Any]] = {}
@@ -870,8 +867,9 @@ class ADSClient:
         return sym.decode(raw, f.data_type)
 
     def _write_checked(self, link: Link, f: Field, data: bytes) -> bytes:
-        """Worker thread: version check, write and read-back with no other request between."""
-        if self._changed(self._read_version()):
+        """Worker thread: version check (on a target that has one), write and read-back
+        with no other request between."""
+        if self._version is not None and self._changed(self._read_version()):
             raise StaleTableError(f"{STALE_TABLE} on '{self.name}'; write refused, retry")
         link.write(f.index_group, f.index_offset, data)
         return link.read(f.index_group, f.index_offset, f.size)
@@ -939,9 +937,6 @@ class ADSRunner:
         # Targets whose worker is still inside a link call after shutdown: the caller
         # must not wait for it (atexit would join the thread).
         self.wedged: list[ADSClient] = []
-
-    def is_running(self) -> bool:
-        return self._loop is not None and self._loop.is_running()
 
     def run(self) -> None:
         """Run every client until shutdown (blocking)."""

@@ -19,7 +19,7 @@
           "name": {
             "type": "string",
             "title": "Name",
-            "description": "Label this target appears under in the trace and the `target` parameter of the actions. Defaults to the host (e.g. cx9240, 192_168_1_10); sanitized like field names.",
+            "description": "Label this target appears under in the trace and the `target` parameter of the actions. Defaults to the host (e.g. plc1, 192_168_1_10); sanitized like field names.",
             "default": "",
             "ui:placeholder": "defaults to host"
           },
@@ -136,7 +136,7 @@
         "local_ams_net_id": {
           "type": "string",
           "title": "Local AMS NetId",
-          "description": "The AMS NetId this extension presents, on a machine without a TwinCAT router (Linux, macOS). Empty derives it from this machine's IP toward the first target plus `.1.1`. The target must hold a route for it (Add Route action, or TwinCAT XAE). Ignored where TwinCAT's own router runs (Beckhoff devices, Windows with TwinCAT).",
+          "description": "The one AMS NetId this extension presents to every target, on a machine without a TwinCAT router (Linux, macOS). Empty derives it from this machine's IP toward the first target plus `.1.1`; set it when the targets sit on different interfaces. Every target must hold a route for it (Add Route action, or TwinCAT XAE). Ignored where TwinCAT's own router runs (Beckhoff devices, Windows with TwinCAT).",
           "default": "",
           "ui:placeholder": "derived from the local IP"
         },

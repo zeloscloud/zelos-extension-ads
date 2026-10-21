@@ -88,6 +88,9 @@ def test_filters(include, exclude, kept):
     probe = ["MAIN.nCycle", "GVL_IO.fFlow", "TwinCAT_SystemInfoVarList._AppInfo.AppName"]
     f = sym.SymbolFilter.parse(include, exclude)
     assert [s for s in probe if f.keeps(s)] == kept
+
+
+def test_invalid_pattern():
     with pytest.raises(ValueError):
         sym.SymbolFilter.parse(["MAIN..x"])
 

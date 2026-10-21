@@ -62,40 +62,40 @@ def outbound_ip(host: str) -> str:
         return sock.getsockname()[0]
 
 
-def derive_local_net_id(host: str) -> str:
-    """Beckhoff's convention: the client's IP toward the target plus `.1.1`.
-
-    The target's router matches a route by the sender's NetId and TCP source
-    address, so the NetId is derived from the interface that reaches it.
-    """
-    return outbound_ip(host) + ".1.1"
-
-
 def native_router() -> bool:
     """Whether the TwinCAT router on this machine carries ADS (no local NetId or routes)."""
     return not ROUTERLESS
 
 
-def ensure_local_router(local_net_id: str) -> str:
-    """Router-less only: open the AdsLib port once and fix its NetId; returns the NetId in use.
+def local_net_id() -> str:
+    """The NetId this process presents, once `ensure_local_router` ran; else ""."""
+    return _local_net_id or ""
 
-    AdsLib holds one NetId per process: the first caller's wins and a later
-    different one is logged, not applied.
+
+def ensure_local_router(host: str, local_net_id: str = "") -> str:
+    """Prepare the local side, once per process: on a router-less platform open the
+    AdsLib port and fix its NetId (`local_net_id`, else Beckhoff's convention: this
+    machine's IP toward `host` plus `.1.1`); nothing on a TwinCAT router. Returns the
+    NetId in use.
+
+    AdsLib holds one NetId per process, so it is resolved before any target
+    connects, from the first one; a later different one is logged, not applied.
+    The target's router matches a route by the sender's NetId and TCP source
+    address, so the NetId is derived from the interface that reaches it.
     """
     global _local_net_id
     if native_router():
         return ""
+    net_id = parse_net_id(local_net_id) if local_net_id else outbound_ip(host) + ".1.1"
     with _router_lock:
         if _local_net_id is None:
             pyads.open_port()
-            pyads.set_local_address(local_net_id)
-            _local_net_id = local_net_id
-            logger.info("Local AMS NetId: %s", local_net_id)
-        elif _local_net_id != local_net_id:
+            pyads.set_local_address(net_id)
+            _local_net_id = net_id
+            logger.info("Local AMS NetId: %s", net_id)
+        elif _local_net_id != net_id:
             logger.warning(
-                "Local AMS NetId is %s for this process; %s not applied",
-                _local_net_id,
-                local_net_id,
+                "Local AMS NetId is %s for this process; %s not applied", _local_net_id, net_id
             )
         return _local_net_id
 
@@ -161,12 +161,13 @@ def identify(hosts: list[str], timeout: float = 2.0, broadcast: bool = False) ->
                 sock.sendto(frame, ("255.255.255.255", UDP_PORT))
             except OSError as e:  # no broadcast-capable interface
                 logger.debug("broadcast failed: %s", e)
+        waiting: set[str] = set()  # the addresses an answer is still expected from
         for host in hosts:
             try:
                 sock.sendto(frame, (host, UDP_PORT))
+                waiting.add(socket.gethostbyname(host))
             except OSError as e:  # unresolvable name
                 logger.debug("identify %s: %s", host, e)
-        waiting = {socket.gethostbyname(h) for h in hosts if _resolves(h)}
         while broadcast or waiting:
             try:
                 data, (address, _) = sock.recvfrom(2048)
@@ -181,21 +182,6 @@ def identify(hosts: list[str], timeout: float = 2.0, broadcast: bool = False) ->
     return list(found.values())
 
 
-def _resolves(host: str) -> bool:
-    try:
-        socket.gethostbyname(host)
-    except OSError:
-        return False
-    return True
-
-
-def identify_one(host: str, timeout: float = 2.0) -> Device | None:
-    """The router at `host`, or None."""
-    for device in identify([host], timeout):
-        return device
-    return None
-
-
 def add_route(
     host: str,
     username: str,
@@ -208,8 +194,10 @@ def add_route(
     """Add a route for `local_net_id` at `local_host` to the TwinCAT router at `host`
     through Beckhoff's UDP handshake; False when the credentials are refused.
 
-    The credentials go into one UDP frame and are kept nowhere. The frame is
-    pyads's `add_route_to_plc` one, built here for a bounded socket timeout.
+    The credentials go into one UDP frame and are kept nowhere. The frame is the
+    one pyads's `add_route_to_plc` sends, built here because that function misreads
+    a refusal from TwinCAT 3.1.4026 (tag 1 value 0x0704, ADS 1796) as an unexpected
+    reply and raises instead of returning False.
     """
 
     def block(tag: int, text: str) -> bytes:

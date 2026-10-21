@@ -17,7 +17,7 @@ import zelos_sdk
 from zelos_sdk.extensions import ConfigValidationError, load_config
 from zelos_sdk.hooks.logging import TraceLoggingHandler
 
-from zelos_extension_ads import ACTION_PREFIX
+from zelos_extension_ads import ACTION_PREFIX, ams
 from zelos_extension_ads import actions as ads_actions
 from zelos_extension_ads.client import (
     LOG_EVENT,
@@ -28,7 +28,8 @@ from zelos_extension_ads.client import (
     default_target_name,
     install_log_handler,
 )
-from zelos_extension_ads.symbols import SymbolMap
+from zelos_extension_ads.symbols import SymbolMap, sanitize
+from zelos_extension_ads.transport import describe_error
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ TARGET_DEFAULTS: dict[str, Any] = {
 TOP_LEVEL_KEYS = frozenset({"targets", "advanced"})
 
 #: Shared client settings every ADSClient takes from `advanced`.
-_SHARED = ("timeout", "max_notifications", "min_update_interval", "local_ams_net_id")
+_SHARED = ("timeout", "max_notifications", "min_update_interval")
 
 
 def resolve_advanced(config: dict[str, Any]) -> dict[str, Any]:
@@ -94,7 +95,7 @@ def reject_unknown_shape(config: dict[str, Any]) -> None:
 def trace_name(value: str) -> str:
     """A prefix or target name as the trace catalog addresses it."""
     value = value.strip()
-    return zelos_sdk.sanitize_name(value, kind="source") if value else ""
+    return sanitize(value, "source") if value else ""
 
 
 def _inherit(target: dict[str, Any], advanced: dict[str, Any]) -> dict[str, Any]:
@@ -147,24 +148,6 @@ def resolve_targets(config: dict[str, Any], advanced: dict[str, Any]) -> list[di
             }
         )
     return resolved
-
-
-def demo_target_kwargs(advanced: dict[str, Any]) -> dict[str, Any]:
-    """The built-in demo PLC as the one target `demo`, through an in-process link."""
-    from zelos_extension_ads.demo import DEMO_NET_ID, DemoLink, DemoPlc
-
-    plc = DemoPlc()
-    return {
-        **{k: advanced[k] for k in _SHARED},
-        "transport": advanced["transport"],
-        "include": advanced["include"],
-        "exclude": advanced["exclude"],
-        "name": DEMO_NAME,
-        "host": "localhost",
-        "ams_net_id": DEMO_NET_ID,
-        "symbol_map_file": "",
-        "link_factory": lambda: DemoLink(plc),
-    }
 
 
 def load_symbol_map(map_file: str | None, target: str = "") -> SymbolMap | None:
@@ -224,7 +207,29 @@ def open_sources(prefix: str) -> SharedSource | None:
     return shared
 
 
-def serve(clients: list[ADSClient], prefix: str) -> None:
+def set_local_router(clients: list[ADSClient], local_ams_net_id: str = "") -> None:
+    """The one AMS NetId this process presents, fixed before any client connects, or exit.
+
+    Router-less platforms: `local_ams_net_id`, else derived from the interface
+    toward the first target; every target is reached from it. Demo links need none.
+    """
+    real = [c for c in clients if c._link_factory is None]
+    if not real:
+        return
+    try:
+        net_id = ams.ensure_local_router(real[0].host, local_ams_net_id)
+    except Exception as e:
+        logger.error(
+            "Local AMS NetId toward %s: %s; check the host, or set Advanced > Local AMS NetId",
+            real[0].host,
+            describe_error(e),
+        )
+        sys.exit(1)
+    for client in real:
+        client.local_net_id = net_id
+
+
+def serve(clients: list[ADSClient], prefix: str, local_ams_net_id: str = "") -> None:
     """Publish the action surface, then run every target until shutdown.
 
     Actions register before `init()`: registered later they may never be
@@ -232,6 +237,7 @@ def serve(clients: list[ADSClient], prefix: str) -> None:
     which the SDK holds for the process: rotation must be able to drop it so its
     segment ends.
     """
+    set_local_router(clients, local_ams_net_id)
     runner = ADSRunner(clients)
     ads_actions.set_runner(runner)
     ads_actions.register_actions(zelos_sdk.actions_registry)
@@ -285,12 +291,16 @@ def run_config(config: dict[str, Any], demo: bool = False) -> None:
     prefix = trace_name(str(advanced["prefix"]))
 
     if demo:
-        logger.info("Demo mode: using the built-in demo PLC")
-        targets = [demo_target_kwargs(advanced)]
-    else:
-        targets = resolve_targets(config, advanced)
+        from zelos_extension_ads.demo import DEMO_NET_ID, DemoLink, DemoPlc
 
-    serve(build_clients(targets), prefix)
+        logger.info("Demo mode: using the built-in demo PLC")
+        config = {**config, "targets": [{"name": DEMO_NAME, "ams_net_id": DEMO_NET_ID}]}
+    targets = resolve_targets(config, advanced)
+    if demo:
+        plc = DemoPlc()
+        targets[0]["link_factory"] = lambda: DemoLink(plc)
+
+    serve(build_clients(targets), prefix, str(advanced["local_ams_net_id"]).strip())
 
 
 def run_app_mode(demo: bool = False) -> None:

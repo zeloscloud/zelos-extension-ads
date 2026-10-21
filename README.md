@@ -36,7 +36,7 @@ In the app:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Name | host | Trace name (`cx9240`); unique |
+| Name | host | Trace name (`plc1`); unique |
 | Host | `localhost` | IP or host name of the TwinCAT router |
 | AMS NetId | | Target NetId (`5.1.2.3.1.1`); empty asks the host (UDP 48899) on every connect |
 | AMS Port | `851` | PLC runtime: 851 first TwinCAT 3 PLC, 852 second, 801 TwinCAT 2 |
@@ -51,10 +51,10 @@ Applies to every target unless the target overrides it.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `prefix` | `ADS` | Trace source: `ADS/cx9240/MAIN`; cleared = one source per target |
+| `prefix` | `ADS` | Trace source: `ADS/plc1/MAIN`; cleared = one source per target |
 | `timeout` | `5.0` | Request timeout (s) |
 | `log_level` | `INFO` | Logging verbosity |
-| `local_ams_net_id` | derived | NetId this machine presents (Linux, macOS); empty = local IP + `.1.1` |
+| `local_ams_net_id` | derived | The one NetId this machine presents to every target (Linux, macOS); empty = local IP toward the first target + `.1.1` |
 | `transport` | `notification` | Default transport |
 | `max_notifications` | `1000` | Symbols per target above which it polls |
 | `min_update_interval` | `60` | Re-read a subscribed symbol silent this long (s) |
@@ -121,9 +121,11 @@ Event keys become trace events, symbols their fields. Types and addresses come f
 With several targets, pass `target` to pick one.
 
 ```bash
-zelos actions execute "Beckhoff ADS/read_symbol" --params '{"symbol":"MAIN.nCycle","target":"cx9240"}'
+zelos actions execute "Beckhoff ADS/read_symbol" --params '{"symbol":"MAIN.nCycle","target":"plc1"}'
 zelos actions execute "Beckhoff ADS/add_route" --params '{"host":"192.168.1.10","username":"Administrator","password":"..."}'
 ```
+
+A password on the command line lands in the shell history; prefer the action form in the app.
 
 ## Development
 

@@ -12,9 +12,7 @@ import asyncio
 import contextlib
 import logging
 import struct
-import threading
-import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pyads.pyads_ex import ADSError
 
@@ -25,19 +23,18 @@ from zelos_extension_ads.transport import (
     ADSIGRP_SYM_DT_UPLOAD,
     ADSIGRP_SYM_UPLOAD,
     ADSIGRP_SYM_UPLOADINFO2,
+    FILETIME_EPOCH,
 )
 
 logger = logging.getLogger(__name__)
 
 # ADS command ids.
-READ_DEVICE_INFO, READ, WRITE, READ_STATE, WRITE_CONTROL = 1, 2, 3, 4, 5
+READ_DEVICE_INFO, READ, WRITE, READ_STATE = 1, 2, 3, 4
 ADD_NOTIFICATION, DEL_NOTIFICATION, NOTIFICATION, READ_WRITE = 6, 7, 8, 9
 STATE_REQUEST, STATE_RESPONSE = 0x0004, 0x0005
 _AMS_HEADER = struct.Struct(
     "<6sH6sHHHIII"
 )  # target, port, source, port, cmd, state, len, err, invoke
-_FILETIME_EPOCH = 116444736000000000
-DEMO_START_TIMEOUT = 5.0
 
 
 def net_id_bytes(net_id: str) -> bytes:
@@ -49,7 +46,7 @@ class _Client:
     writer: asyncio.StreamWriter
     net_id: bytes = b""
     port: int = 0
-    handles: dict[int, int] | None = None  # notification handle -> plc handle
+    handles: set[int] = field(default_factory=set)  # notifications held
 
 
 class DemoServer:
@@ -85,7 +82,7 @@ class DemoServer:
             self._server = None
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        client = _Client(writer, handles={})
+        client = _Client(writer)
         self._writers.add(writer)
         try:
             while True:
@@ -100,7 +97,7 @@ class DemoServer:
         except (asyncio.IncompleteReadError, ConnectionError):
             pass
         finally:
-            for handle in list(client.handles or {}):
+            for handle in list(client.handles):
                 with contextlib.suppress(ADSError):
                     self.plc.unsubscribe(handle)
             self._writers.discard(writer)
@@ -164,14 +161,12 @@ class DemoServer:
                     group, offset, size, max(cycle // 10000, 1), self._notifier(client, box)
                 )
                 box.append(handle)
-            assert client.handles is not None
-            client.handles[handle] = handle
+            client.handles.add(handle)
             return struct.pack("<I", handle)
         if cmd == DEL_NOTIFICATION:
             (handle,) = struct.unpack_from("<I", data)
             plc.unsubscribe(handle)
-            if client.handles:
-                client.handles.pop(handle, None)
+            client.handles.discard(handle)
             return b""
         raise ADSError(1793)
 
@@ -191,7 +186,7 @@ class DemoServer:
         """A PLC callback that pushes one DEVICENOTE frame to `client` for the handle in `box`."""
 
         def push(stamp_ns: int, data: bytes) -> None:
-            filetime = stamp_ns // 100 + _FILETIME_EPOCH
+            filetime = stamp_ns // 100 + FILETIME_EPOCH
             sample = struct.pack("<II", box[0], len(data)) + data
             stamp = struct.pack("<QI", filetime, 1) + sample
             body = struct.pack("<II", len(stamp) + 4, 1) + stamp
@@ -219,41 +214,12 @@ class DemoServer:
             writer.write(frame)
 
 
-async def run_server(
-    host: str = DEMO_HOST, port: int = ADS_TCP_PORT, ready: threading.Event | None = None
-) -> None:
+async def run_server(host: str = DEMO_HOST, port: int = ADS_TCP_PORT) -> None:
     """Serve until cancelled."""
     server = DemoServer(host=host, port=port)
     await server.start()
-    if ready is not None:
-        ready.set()
     try:
         while True:
             await asyncio.sleep(3600)
     finally:
         await server.stop()
-
-
-def start_server_thread(host: str = DEMO_HOST, port: int = ADS_TCP_PORT) -> threading.Thread:
-    """The demo server in a background thread; returns once it listens, or raises."""
-    ready = threading.Event()
-    errors: list[Exception] = []
-
-    def run() -> None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(run_server(host, port, ready))
-        except Exception as e:
-            errors.append(e)
-        finally:
-            ready.set()
-            loop.close()
-
-    thread = threading.Thread(target=run, name="demo-ads-server", daemon=True)
-    thread.start()
-    if not ready.wait(DEMO_START_TIMEOUT) or errors:
-        reason = errors[0] if errors else "timed out"
-        raise RuntimeError(f"Demo PLC did not start on {host}:{port}: {reason}")
-    time.sleep(0.05)
-    return thread

@@ -25,7 +25,8 @@ dependencies = [
     "zelos-sdk>=0.0.13a1",
     # 3.6 floor: prebuilt AdsLib for macOS/Linux x86_64+aarch64 (no native build at
     # install) and the Beckhoff RT Linux detection that uses the device's own router.
-    "pyads>=3.6.0",
+    # 3.7 ceiling: `PyadsLink.close` reaches into pyads internals (port, callback store).
+    "pyads>=3.6,<3.7",
     "rich-click>=1.8.0",
 ]
 

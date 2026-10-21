@@ -11,14 +11,14 @@ import math
 import struct
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from pyads.pyads_ex import ADSError
 
 from zelos_extension_ads import symbols as sym
 from zelos_extension_ads.symbols import SymbolEntry, TypeEntry
-from zelos_extension_ads.transport import NotifyCallback
+from zelos_extension_ads.transport import ADSIGRP_SYM_VERSION, NotifyCallback
 
 DEMO_NET_ID = "192.168.100.10.1.1"
 DEMO_HOST = "127.0.0.1"
@@ -27,7 +27,6 @@ TASK_SECONDS = 0.01
 
 IG_DATA = 0x4040
 IG_OUTPUTS = 0xF030
-IG_SYM_VERSION = 0xF008
 ADSSTATE_RUN = 5
 
 # (name, type name, ADS type, size) of the base types the demo declares.
@@ -110,7 +109,7 @@ class DemoPlc:
     # The symbol version (0xF008): one byte TwinCAT bumps per online change.
     _version: _Var = field(
         default_factory=lambda: _Var(
-            SymbolEntry("", "BYTE", IG_SYM_VERSION, 0, 1, sym.ADST_UINT8, 0), bytearray([1])
+            SymbolEntry("", "BYTE", ADSIGRP_SYM_VERSION, 0, 1, sym.ADST_UINT8, 0), bytearray([1])
         )
     )
 
@@ -360,9 +359,3 @@ class DemoLink:
         self, group: int, offset: int, size: int, cycle_ms: int, callback: NotifyCallback
     ) -> int:
         return self._require().subscribe(group, offset, size, cycle_ms, callback)
-
-    def unsubscribe(self, handle: int) -> None:
-        self._require().unsubscribe(handle)
-
-
-LinkFactory = Callable[[], DemoLink]
