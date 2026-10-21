@@ -54,13 +54,15 @@ INT_RANGES = {
 BOOL_TRUE = frozenset({"true", "1", "on", "yes"})
 BOOL_FALSE = frozenset({"false", "0", "off", "no"})
 
-#: Symbols no one traces by default: TwinCAT's own GVLs and library constants.
+#: Symbols no one traces by default: TwinCAT's own GVLs and Beckhoff library globals.
 #: Globs over the symbol path, like `exclude`; `include` wins over these.
 SYSTEM_GLOBALS = (
     "TwinCAT_*.**",  # TwinCAT_SystemInfoVarList, TwinCAT_PreventOnlineChangeGvl
     "Constants.**",
     "Global_Version.**",
     "LREAL_CONST.**",
+    "Tc2_*.**",  # Beckhoff library globals (Tc2_MC2, Tc2_System, ...)
+    "Tc3_*.**",
 )
 
 #: The per-target health event. Sanitized map and symbol names never start

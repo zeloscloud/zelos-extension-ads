@@ -76,7 +76,7 @@ Plain ADS (TCP 48898) carries no encryption or authentication beyond the route: 
 
 ### Every variable
 
-A target without a symbol map traces every scalar PLC variable it holds, read-only: the event is the POU or GVL (`MAIN`, `GVL_IO`), the field the variable, struct members and array elements flattened (`stMotor_fSpeed`, `arrTemps_2`). `TwinCAT_*`, `Constants`, `Global_Version` and `LREAL_CONST` are left out unless `include` names them.
+A target without a symbol map traces every scalar PLC variable it holds, read-only: the event is the POU or GVL (`MAIN`, `GVL_IO`), the field the variable, struct members and array elements flattened (`stMotor_fSpeed`, `arrTemps_2`). `TwinCAT_*`, `Constants`, `Global_Version`, `LREAL_CONST` and Beckhoff library globals (`Tc2_*`, `Tc3_*`) are left out unless `include` names them.
 
 ### Auto-configure
 

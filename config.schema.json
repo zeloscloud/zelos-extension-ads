@@ -169,7 +169,7 @@
         "include": {
           "type": "array",
           "title": "Include",
-          "description": "Without a symbol map: symbol globs to trace, over the dotted symbol path (`*` within one segment, `**` any depth), e.g. MAIN.**. Empty traces every PLC variable except TwinCAT's own (TwinCAT_*, Constants, Global_Version, LREAL_CONST), which an include may name.",
+          "description": "Without a symbol map: symbol globs to trace, over the dotted symbol path (`*` within one segment, `**` any depth), e.g. MAIN.**. Empty traces every PLC variable except TwinCAT's own (TwinCAT_*, Constants, Global_Version, LREAL_CONST) and Beckhoff libraries (Tc2_*, Tc3_*), which an include may name.",
           "items": {
             "type": "string"
           },
