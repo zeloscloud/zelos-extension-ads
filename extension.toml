@@ -1,0 +1,43 @@
+# Zelos Extension Manifest
+# See https://docs.zeloscloud.io/sdk/how-to/develop-extensions/ for full documentation
+
+name = "ADS"
+version = "0.1.0"
+description = "Beckhoff TwinCAT ADS extension for Zelos: trace PLC variables by notification or polling, read and write symbols"
+author = "Zelos Cloud"
+repository = "https://github.com/zeloscloud/zelos-extension-ads"
+homepage = "https://github.com/zeloscloud/zelos-extension-ads"
+keywords = ["ads", "twincat", "beckhoff", "industrial", "plc", "automation"]
+categories = ["Industrial", "IoT", "Protocol"]
+
+# File references (relative paths in archive)
+icon = "assets/icon.svg"
+readme = "README.md"
+
+# Compatibility (optional, defaults to ^25.0.20). 26.0.4 is the first app that
+# parses the [host]/[package] manifest syntax below; older ones fail on install.
+[zelos]
+version = ">=26.0.4"
+
+# Configuration schema (enables UI in Zelos App)
+[config]
+schema = "config.schema.json"
+
+# Host: this extension runs as an agent-side process
+[host]
+type = "agent"
+
+[host.agent]
+entry = "main.py"
+runtime = "python"
+python_version = "3.11"
+
+# Graceful shutdown (optional, defaults to 10). Must live under [host.agent];
+# a top-level [stop] conflicts with [host.agent].
+[host.agent.stop]
+grace_seconds = 10
+
+# Package contents. extension.toml, readme, icon, config schema, pyproject.toml,
+# uv.lock, and actions.json are included automatically.
+[package]
+paths = ["main.py", "zelos_extension_ads"]
