@@ -69,7 +69,7 @@ TwinCAT accepts a client only from an AMS NetId it holds a route for.
 | Where the extension runs | What to do |
 |---|---|
 | A Beckhoff device (TwinCAT/BSD, RT Linux) tracing itself | Nothing: its own router carries the connection |
-| Linux or macOS | Once per target: `add_route` action with the target's host and a TwinCAT user. The route names this machine's NetId (`local_ams_net_id`, default local IP + `.1.1`). Or add it in TwinCAT XAE |
+| Linux or macOS | Once per target: `add_route` action with the target's host and a TwinCAT user. The route names this machine's NetId (`local_ams_net_id`, default local IP + `.1.1`). Or add it in TwinCAT XAE. Targets on different networks share the one NetId; run `add_route` against each, which registers this machine's IP on that network |
 | Windows with TwinCAT, or a Beckhoff device tracing another | Add the route in that router (XAE, `adstool addroute`); this extension uses it |
 
 Plain ADS (TCP 48898) carries no encryption or authentication beyond the route: keep it on a trusted network.
