@@ -59,7 +59,7 @@ Applies to every target unless the target overrides it.
 | `log_level` | `INFO` | Logging verbosity |
 | `local_ams_net_id` | derived | The one NetId this machine presents to every target (Linux, macOS); empty = local IP toward the first target + `.1.1` |
 | `transport` | `notification` | Default transport |
-| `max_notifications` | `500` | Notifications per target (one per PLC variable traced, plus the symbol-version one) above which it polls; Beckhoff allows 550 per ADS port |
+| `max_notifications` | `500` | Notifications per target (one per PLC variable traced, plus the symbol-version and online-change-counter ones) above which it polls; Beckhoff allows 550 per ADS port |
 | `min_update_interval` | `60` | Re-read a subscribed symbol silent this long (s); log an unchanged EtherCAT slave again this often |
 | `ethercat_interval` | `1.0` | EtherCAT master and slave read period (s) |
 | `include` / `exclude` | | Symbol globs; TwinCAT's own GVLs are excluded unless included |

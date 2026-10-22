@@ -14,7 +14,7 @@ from pyads.pyads_ex import ADSError
 from tests.conftest import running, server, wait_until, wire, wire_client
 from zelos_extension_ads import actions, ams
 from zelos_extension_ads.cli import app
-from zelos_extension_ads.client import ADSClient, ADSRunner, SharedSource
+from zelos_extension_ads.client import SYM_VERSION, ADSClient, ADSRunner, SharedSource
 from zelos_extension_ads.demo.plc import DEMO_NET_ID, DemoLink, DemoPlc
 from zelos_extension_ads.demo.server import DemoServer
 from zelos_extension_ads.symbols import HEALTH_EVENT, SymbolMap
@@ -94,10 +94,27 @@ async def test_poll_resyncs_on_symbol_version_change(caplog):
         assert plc.vars["MAIN.bOut1"].data == b"\1" and plc.vars["MAIN.bOut0"].data == b"\0"
         assert not plc._handles
         await wait_until(lambda: "main.bout0" in client._uploaded, 10.0)
-        assert client._connected and client._version == plc.read(ADSIGRP_SYM_VERSION, 0, 1)
+        assert client._watched[SYM_VERSION][0] == plc.read(ADSIGRP_SYM_VERSION, 0, 1)
         assert client.field("MAIN.bOut1").index_offset == f.index_offset + 1
         await client.write_value(client.field("MAIN.bOut1"), False)
     assert "symbol table changed; uploading the symbol table again" in caplog.text
+
+
+async def test_online_change_counter_resyncs(caplog):
+    """An online change leaves 0xF008 alone: OnlineChangeCnt, watched though TwinCAT_*
+    is not traced, triggers the upload."""
+    caplog.set_level(logging.INFO)
+    plc = DemoPlc()
+    client = demo_client(plc)
+    async with running(client):
+        await wait_until(lambda: client._connected, 10.0)
+        assert len(client._watched) == 2 and "2 watches subscribed" in caplog.text
+        with plc._lock:
+            plc._poke("TwinCAT_SystemInfoVarList._AppInfo", 0, struct.pack("<I", 1))
+        await wait_until(lambda: "online change; uploading" in caplog.text, 10.0)
+        await wait_until(lambda: client._connected, 10.0)
+    assert "Watching TwinCAT_SystemInfoVarList._AppInfo.OnlineChangeCnt at 0x4040:0x" in caplog.text
+    assert caplog.text.count("online change; uploading") == 1
 
 
 async def test_actions_read_write_state_and_selection():

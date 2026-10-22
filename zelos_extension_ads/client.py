@@ -56,9 +56,13 @@ FLUSH_SECONDS = 0.02
 NOTIFY_MAX_BYTES = 1024
 # Staleness sweep steps per min_update_interval.
 SWEEP_STEPS = 4
-# The symbol version is read with every health probe and subscribed in notification
-# mode; a change means the addresses held are stale.
+# Watched values, read with every health probe and subscribed in notification mode; a
+# change means the addresses held are stale. The symbol version does not move on an
+# online change, which can still move variables; TwinCAT 3's counter does.
 STALE_TABLE = "symbol table changed"
+ONLINE_CHANGE = "online change"
+ONLINE_CHANGE_CNT = "TwinCAT_SystemInfoVarList._AppInfo.OnlineChangeCnt"
+SYM_VERSION = (ADSIGRP_SYM_VERSION, 0, 1)
 ETHERCAT_FIX = (
     "set the target's ethercat_ams_net_id to the NetId on the device's EtherCAT tab in "
     "TwinCAT XAE, or turn its EtherCAT diagnostics off"
@@ -100,7 +104,7 @@ class ConnectError(Exception):
 
 
 class StaleTableError(RuntimeError):
-    """The target's symbol version moved since the upload: every address held is suspect."""
+    """A watched value moved since the upload: every address held is suspect."""
 
 
 def default_target_name(host: str) -> str:
@@ -135,6 +139,7 @@ class SharedSource:
 
 
 Declared = tuple[str, zelos_sdk.DataType, str]
+Address = tuple[int, int, int]  # index group, index offset, size
 
 
 def _field(f: Field) -> Declared:
@@ -186,8 +191,8 @@ class ADSClient:
             include: Without a map, symbol globs to trace; empty traces everything
             exclude: Without a map, symbol globs not traced; win over include
             max_notifications: Notifications per target (one per symbol-table entry traced),
-                the symbol-version one included, above which the notification transport
-                polls (Beckhoff: 550 per ADS port)
+                the watched ones (symbol version, online-change counter) included, above
+                which the notification transport polls (Beckhoff: 550 per ADS port)
             min_update_interval: A subscribed entry silent this long is re-read; an
                 unchanged EtherCAT slave is logged again this often
             link_factory: Makes the link (tests, demo); default pyads
@@ -265,7 +270,8 @@ class ADSClient:
         self._flush_handle: asyncio.TimerHandle | None = None
         self._seen: dict[Block, float] = {}
         self._failed: set[str] = set()
-        self._version: bytes | None = None
+        # Watched address -> (value at connect, resync reason); set per connect only.
+        self._watched: dict[Address, tuple[bytes, str]] = {}
         self._resync = ""
         self._jobs: list[_Job] = []
         self._notification_count = 0
@@ -466,13 +472,31 @@ class ADSClient:
             self._handles, self._polled, self._failed, self._seen = {}, [], set(), {}
             self._pending.clear()
             self._resync = ""
-            self._ecat_identities, self._ecat_last = {}, {}
+            self._ecat_identities, self._ecat_last, self._watched = {}, {}, {}
             started = time.monotonic()
             # Version first: a table that moves during the upload still shows as changed.
-            self._version = await self._call(self._read_version)
+            await self._watch(SYM_VERSION, STALE_TABLE, "Symbol version")
             raw_symbols, raw_types = await self._call(self._link.upload)
             fields = sym.flatten(sym.parse_symbols(raw_symbols), sym.parse_types(raw_types))
             self._uploaded = {f.symbol.lower(): f for f in fields}
+            # Resolved from the whole table: tracing exclusions do not apply.
+            counter = self._uploaded.get(ONLINE_CHANGE_CNT.lower())
+            if counter is None:
+                self._log.warning(
+                    "No %s on this port: an online change is only caught by its "
+                    "stale-address errors",
+                    ONLINE_CHANGE_CNT,
+                )
+            else:
+                address = (counter.index_group, counter.index_offset, counter.size)
+                if await self._watch(address, ONLINE_CHANGE, ONLINE_CHANGE_CNT):
+                    self._log.info(
+                        "Watching %s at 0x%X:0x%X (%d)",
+                        ONLINE_CHANGE_CNT,
+                        address[0],
+                        address[1],
+                        int.from_bytes(self._watched[address][0], "little"),
+                    )
             events = self._select(fields)
             added, changed = self._declare_events(events)
             for key in changed:
@@ -597,12 +621,14 @@ class ADSClient:
         self._jobs = [_Job(max(HEALTH_INTERVAL, self.cycle_time / 1000.0), self._poll_health)]
         self._active = self.transport
         blocks, wide = sym.blocks(fields, NOTIFY_MAX_BYTES)
-        # The symbol-version subscription counts against the budget too.
-        if self.transport == "notification" and len(blocks) + 1 > self.max_notifications:
+        # The watch subscriptions count against the budget too.
+        watches, watched = len(self._watched), 0
+        if self.transport == "notification" and len(blocks) + watches > self.max_notifications:
             self._log.warning(
-                "%d symbol notifications and the symbol-version one exceed max_notifications "
+                "%d symbol notifications and %d watch ones exceed max_notifications "
                 "(%d): polling this target",
                 len(blocks),
+                watches,
                 self.max_notifications,
             )
             self._active = "poll"
@@ -614,10 +640,12 @@ class ADSClient:
                     NOTIFY_MAX_BYTES,
                 )
             self._polled = wide + await self._call(self._subscribe_all, blocks)
-            with contextlib.suppress(Exception):
-                await self._call(
-                    self._link.subscribe, ADSIGRP_SYM_VERSION, 0, 1, 1000, self._on_version
-                )
+            for address in self._watched:
+                with contextlib.suppress(Exception):
+                    await self._call(
+                        self._link.subscribe, *address, 1000, partial(self._on_watch, address)
+                    )
+                    watched += 1
             if self._handles:
                 self._jobs.append(_Job(self.min_update_interval / SWEEP_STEPS, self._sweep))
         else:
@@ -627,10 +655,11 @@ class ADSClient:
         if self._ecat is not None:
             self._jobs.append(_Job(self.ethercat_interval, self._poll_ethercat))
         self._log.info(
-            "Transport %s: %d subscribed, %d polled, cycle %d ms",
+            "Transport %s: %d subscribed, %d polled, %d watches subscribed, cycle %d ms",
             self._active,
             len(self._handles),
             len(self._polled),
+            watched,
             self.cycle_time,
         )
 
@@ -664,29 +693,39 @@ class ADSClient:
         self._pending.append((block, stamp_ns, data))
         self._wake()
 
-    def _read_version(self) -> bytes | None:
-        """Worker thread: the symbol version, None on a target without one (logged once)."""
+    def _read(self, address: Address) -> bytes | Exception:
+        """Worker thread: the bytes at `address`, or the device error (connection errors raise)."""
         assert self._link is not None
         try:
-            return self._link.read(ADSIGRP_SYM_VERSION, 0, 1)
+            return self._link.read(*address)
         except Exception as e:
             if is_connection_error(e):
                 raise
+            return e
+
+    async def _watch(self, address: Address, reason: str, what: str) -> bool:
+        """Capture `address` as watched; False if unreadable (logged)."""
+        value = await self._call(self._read, address)
+        if isinstance(value, Exception):
             self._log.warning(
-                "Symbol version unreadable (%s): a program change is only caught by its "
-                "stale-address errors",
-                describe_error(e),
+                "%s unreadable (%s): a program change is only caught by its stale-address errors",
+                what,
+                describe_error(value),
             )
-            return None
+            return False
+        self._watched[address] = (value, reason)
+        return True
 
-    def _changed(self, version: bytes | None) -> bool:
-        """Whether `version` differs from the table uploaded; `_version` is set per connect only."""
-        return self._version is not None and version is not None and version != self._version
+    def _changed(self, address: Address, value: bytes | Exception) -> str:
+        """The resync reason if the watched `address` moved from its value at connect."""
+        before, reason = self._watched[address]
+        return reason if isinstance(value, bytes) and value != before else ""
 
-    def _on_version(self, _stamp_ns: int, data: bytes) -> None:
+    def _on_watch(self, address: Address, _stamp_ns: int, data: bytes) -> None:
         """ADS receive thread: the loop reconnects on a change."""
-        if self._changed(data):
-            self._resync = STALE_TABLE
+        reason = self._changed(address, data)
+        if reason:
+            self._resync = reason
             self._wake()
 
     def _wake(self) -> None:
@@ -791,12 +830,14 @@ class ADSClient:
         self._poll_count += 1
 
     async def _poll_health(self) -> None:
-        """ReadState, and the symbol version: polled addresses go stale silently."""
+        """ReadState, and the watched values: polled addresses go stale silently."""
         assert self._link is not None
         self.plc_state = await self._call(self._link.read_state)
-        if self._version is not None and self._changed(await self._call(self._read_version)):
-            self._resync, self._connected = STALE_TABLE, False
-            return
+        for address in self._watched:
+            reason = self._changed(address, await self._call(self._read, address))
+            if reason:
+                self._resync, self._connected = reason, False
+                return
         self._log_health(connected=True)
 
     def _log_health(self, connected: bool) -> None:
@@ -1031,7 +1072,7 @@ class ADSClient:
 
     def _require_link(self) -> Link:
         if self._resync:
-            raise StaleTableError(f"{STALE_TABLE} on '{self.name}'; reconnecting, retry")
+            raise StaleTableError(f"{self._resync} on '{self.name}'; reconnecting, retry")
         if self._link is None or not self._connected:
             raise RuntimeError(f"target '{self.name}' is not connected")
         return self._link
