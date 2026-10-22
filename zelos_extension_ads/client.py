@@ -27,7 +27,7 @@ from zelos_sdk.hooks.logging import TraceLoggingHandler
 from zelos_extension_ads import ams
 from zelos_extension_ads import ethercat as ecat
 from zelos_extension_ads import symbols as sym
-from zelos_extension_ads.symbols import HEALTH_EVENT, Field, SymbolFilter, SymbolMap
+from zelos_extension_ads.symbols import HEALTH_EVENT, Block, Field, SymbolFilter, SymbolMap
 from zelos_extension_ads.transport import (
     ADSIGRP_SYM_VERSION,
     Link,
@@ -51,6 +51,9 @@ TRANSPORTS = ("notification", "poll")
 HEALTH_INTERVAL = 1.0
 # Notifications are coalesced this long before logging: one row per POU and timestamp.
 FLUSH_SECONDS = 0.02
+# One notification spans a symbol-table entry's traced leaves; a wider span is polled:
+# bounds the per-change payload (Beckhoff advises sum reads for bulk data).
+NOTIFY_MAX_BYTES = 1024
 # Staleness sweep steps per min_update_interval.
 SWEEP_STEPS = 4
 # The symbol version is read with every health probe and subscribed in notification
@@ -182,9 +185,10 @@ class ADSClient:
             timeout: ADS request timeout, seconds
             include: Without a map, symbol globs to trace; empty traces everything
             exclude: Without a map, symbol globs not traced; win over include
-            max_notifications: Notifications per target, the symbol-version one included,
-                above which the notification transport polls (Beckhoff: 550 per ADS port)
-            min_update_interval: A subscribed symbol silent this long is re-read; an
+            max_notifications: Notifications per target (one per symbol-table entry traced),
+                the symbol-version one included, above which the notification transport
+                polls (Beckhoff: 550 per ADS port)
+            min_update_interval: A subscribed entry silent this long is re-read; an
                 unchanged EtherCAT slave is logged again this often
             link_factory: Makes the link (tests, demo); default pyads
             ethercat: Also trace the target's EtherCAT master and slaves
@@ -254,12 +258,12 @@ class ADSClient:
         self._events: dict[str, list[Field]] = {}
         self._traced: dict[str, Field] = {}
         # Transport state per connection.
-        self._handles: dict[int, Field] = {}
+        self._handles: dict[int, Block] = {}
         self._polled: list[Field] = []
         self._active = ""  # transport in use this connection
-        self._pending: collections.deque[tuple[Field, int, bytes]] = collections.deque()
+        self._pending: collections.deque[tuple[Block, int, bytes]] = collections.deque()
         self._flush_handle: asyncio.TimerHandle | None = None
-        self._seen: dict[str, float] = {}
+        self._seen: dict[Block, float] = {}
         self._failed: set[str] = set()
         self._version: bytes | None = None
         self._resync = ""
@@ -592,17 +596,24 @@ class ADSClient:
         fields = [f for fs in self._events.values() for f in fs]
         self._jobs = [_Job(max(HEALTH_INTERVAL, self.cycle_time / 1000.0), self._poll_health)]
         self._active = self.transport
+        blocks, wide = sym.blocks(fields, NOTIFY_MAX_BYTES)
         # The symbol-version subscription counts against the budget too.
-        if self.transport == "notification" and len(fields) + 1 > self.max_notifications:
+        if self.transport == "notification" and len(blocks) + 1 > self.max_notifications:
             self._log.warning(
-                "%d symbols and the symbol-version notification exceed max_notifications "
+                "%d symbol notifications and the symbol-version one exceed max_notifications "
                 "(%d): polling this target",
-                len(fields),
+                len(blocks),
                 self.max_notifications,
             )
             self._active = "poll"
         if self._active == "notification":
-            self._polled = await self._call(self._subscribe_all, fields)
+            if wide:
+                self._log.info(
+                    "%d fields in symbols spanning over %d bytes: polled",
+                    len(wide),
+                    NOTIFY_MAX_BYTES,
+                )
+            self._polled = wide + await self._call(self._subscribe_all, blocks)
             with contextlib.suppress(Exception):
                 await self._call(
                     self._link.subscribe, ADSIGRP_SYM_VERSION, 0, 1, 1000, self._on_version
@@ -623,34 +634,34 @@ class ADSClient:
             self.cycle_time,
         )
 
-    def _subscribe_all(self, fields: list[Field]) -> list[Field]:
-        """Worker thread: one notification per field; the rest are polled after a refusal."""
+    def _subscribe_all(self, blocks: list[Block]) -> list[Field]:
+        """Worker thread: one notification per block; the rest are polled after a refusal."""
         assert self._link is not None
-        for i, f in enumerate(fields):
+        for i, b in enumerate(blocks):
             try:
                 handle = self._link.subscribe(
-                    f.index_group,
-                    f.index_offset,
-                    f.size,
+                    b.index_group,
+                    b.start,
+                    b.size,
                     self.cycle_time,
-                    partial(self._on_notification, f),
+                    partial(self._on_notification, b),
                 )
             except Exception as e:
                 if is_connection_error(e):
                     raise
                 self._log.warning(
                     "Notification refused for %s (%s); polling it and the %d after it",
-                    f.symbol,
+                    b.fields[0].root or b.fields[0].symbol,
                     describe_error(e),
-                    len(fields) - i - 1,
+                    len(blocks) - i - 1,
                 )
-                return fields[i:]
-            self._handles[handle] = f
+                return [f for rest in blocks[i:] for f in rest.fields]
+            self._handles[handle] = b
         return []
 
-    def _on_notification(self, f: Field, stamp_ns: int, data: bytes) -> None:
+    def _on_notification(self, block: Block, stamp_ns: int, data: bytes) -> None:
         """ADS receive thread: queue and wake the loop."""
-        self._pending.append((f, stamp_ns, data))
+        self._pending.append((block, stamp_ns, data))
         self._wake()
 
     def _read_version(self) -> bytes | None:
@@ -702,13 +713,9 @@ class ADSClient:
         now = time.monotonic()
         latest = 0
         while self._pending:
-            f, stamp_ns, data = self._pending.popleft()
-            value = sym.decode(data, f.data_type, f.scale, f.bit)
-            if value is None:
-                self._log_field_failure(f, f"{len(data)} bytes for a {f.type_name}")
-                continue
-            rows.setdefault((f.event, stamp_ns), {})[f.name] = value
-            self._seen[f.key] = now
+            block, stamp_ns, data = self._pending.popleft()
+            self._decode_block(block, data, stamp_ns, rows)
+            self._seen[block] = now
             self._notification_count += 1
             latest = max(latest, stamp_ns)
         for (event, stamp_ns), values in sorted(rows.items(), key=lambda r: r[0][1]):
@@ -720,16 +727,23 @@ class ADSClient:
         if self._resync:
             self._connected = False  # the loop reconnects and uploads again
 
-    async def _read_fields(self, fields: list[Field], plc_time: bool = False) -> None:
-        """One sum read of `fields`, one row per event, logged at host time; with
-        `plc_time`, at host time minus the measured skew (the notification rows' base)."""
+    def _decode_block(
+        self, block: Block, data: bytes, stamp_ns: int, rows: dict[tuple[str, int], dict[str, Any]]
+    ) -> None:
+        """Each leaf of `block` from its span's bytes into `rows`, keyed (event, stamp)."""
+        for f, value in block.values(data):
+            if value is None:
+                self._log_field_failure(f, f"{len(data)} bytes for a {block.size}-byte span")
+                continue
+            rows.setdefault((f.event, stamp_ns), {})[f.name] = value
+
+    async def _read_fields(self, fields: list[Field]) -> None:
+        """One sum read of `fields`, one row per event, logged at host time."""
         assert self._link is not None
         results = await self._call(
             self._link.sum_read, [(f.index_group, f.index_offset, f.size) for f in fields]
         )
-        stamp_ns = time.time_ns() - round(self._skew_ms * 1e6)
         rows: dict[str, dict[str, Any]] = {}
-        now = time.monotonic()
         for f, result in zip(fields, results, strict=True):
             if isinstance(result, int):
                 self._log_field_failure(f, f"ADS error {result}")
@@ -739,14 +753,9 @@ class ADSClient:
                 self._log_field_failure(f, f"{len(result)} bytes for a {f.type_name}")
                 continue
             rows.setdefault(f.event, {})[f.name] = value
-            self._seen[f.key] = now
         for event, values in rows.items():
             trace_event = self._trace_events.get(event)
-            if trace_event is None or not values:
-                continue
-            if plc_time:
-                trace_event.log_at(stamp_ns, **values)
-            else:
+            if trace_event is not None and values:
                 trace_event.log(**values)
         self._poll_count += 1
 
@@ -754,12 +763,32 @@ class ADSClient:
         await self._read_fields(self._polled)
 
     async def _sweep(self) -> None:
-        """Re-read subscribed symbols silent for min_update_interval: a static value
-        is logged at least that often, on the notifications' (PLC) time base."""
-        cutoff = time.monotonic() - self.min_update_interval
-        stale = [f for f in self._handles.values() if self._seen.get(f.key, 0.0) < cutoff]
-        if stale:
-            await self._read_fields(stale, plc_time=True)
+        """Re-read subscribed blocks silent for min_update_interval: a static value is
+        logged at least that often, at host time minus the measured skew (the
+        notifications' PLC time base)."""
+        assert self._link is not None
+        now = time.monotonic()
+        cutoff = now - self.min_update_interval
+        stale = [b for b in self._handles.values() if self._seen.get(b, 0.0) < cutoff]
+        if not stale:
+            return
+        results = await self._call(
+            self._link.sum_read, [(b.index_group, b.start, b.size) for b in stale]
+        )
+        stamp_ns = time.time_ns() - round(self._skew_ms * 1e6)
+        rows: dict[tuple[str, int], dict[str, Any]] = {}
+        for b, result in zip(stale, results, strict=True):
+            if isinstance(result, int):
+                for f in b.fields:
+                    self._log_field_failure(f, f"ADS error {result}")
+                continue
+            self._decode_block(b, result, stamp_ns, rows)
+            self._seen[b] = now
+        for (event, _), values in rows.items():
+            trace_event = self._trace_events.get(event)
+            if trace_event is not None:
+                trace_event.log_at(stamp_ns, **values)
+        self._poll_count += 1
 
     async def _poll_health(self) -> None:
         """ReadState, and the symbol version: polled addresses go stale silently."""

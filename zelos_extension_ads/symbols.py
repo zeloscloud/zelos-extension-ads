@@ -17,7 +17,7 @@ import json
 import math
 import re
 import struct
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -171,6 +171,7 @@ class Field:
     unit: str = ""
     scale: float = 1.0
     bit: int = -1  # a BIT struct member: its bit in the byte at index_offset
+    root: str = ""  # the symbol-table entry holding it, e.g. MAIN.stMotor
 
     @property
     def datatype(self) -> zelos_sdk.DataType:
@@ -310,6 +311,7 @@ def flatten(symbols: Iterable[SymbolEntry], types: dict[str, TypeEntry]) -> list
                     type_name,
                     symbol.comment.strip(),
                     bit=bit,
+                    root=symbol.name,
                 )
             )
     return fields
@@ -335,6 +337,42 @@ def decode(data: bytes, data_type: int, scale: float = 1.0, bit: int = -1) -> An
     if scale != 1.0 and data_type != ADST_BIT:
         return value * scale
     return value
+
+
+@dataclass(eq=False)
+class Block:
+    """The traced leaves of one symbol-table entry, read as one span of bytes."""
+
+    index_group: int
+    start: int
+    size: int
+    fields: list[Field]
+
+    def values(self, data: bytes) -> Iterator[tuple[Field, Any]]:
+        """Each leaf decoded from the span's bytes; None for one `data` does not cover."""
+        for f in self.fields:
+            at = f.index_offset - self.start
+            if len(data) < at + f.size:
+                yield f, None
+            else:
+                yield f, decode(data[at : at + f.size], f.data_type, f.scale, f.bit)
+
+
+def blocks(fields: Iterable[Field], max_bytes: int) -> tuple[list[Block], list[Field]]:
+    """Fields grouped by symbol-table entry and index group, each spanning its traced
+    leaves, in first-seen order; the leaves of a span over `max_bytes` come back apart."""
+    grouped: dict[tuple[str, int], list[Field]] = {}
+    for f in fields:
+        grouped.setdefault((f.root or f.symbol, f.index_group), []).append(f)
+    out, rest = [], []
+    for fs in grouped.values():
+        start = min(f.index_offset for f in fs)
+        size = max(f.index_offset + f.size for f in fs) - start
+        if size > max_bytes:
+            rest.extend(fs)
+        else:
+            out.append(Block(fs[0].index_group, start, size, fs))
+    return out, rest
 
 
 def encode(value: Any, data_type: int, size: int) -> bytes:
@@ -509,6 +547,7 @@ class SymbolMap:
                         entry.unit,
                         entry.scale,
                         found.bit,
+                        found.root,
                     )
                 )
         return out, missing

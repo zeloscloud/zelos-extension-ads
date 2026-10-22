@@ -156,7 +156,7 @@
         "transport": {
           "type": "string",
           "title": "Transport",
-          "description": "'notification': the target pushes value changes (ADS device notifications, one per symbol), checked every cycle time. 'poll': one sum read of every symbol per cycle time. A target with more symbols than Max Notifications polls.",
+          "description": "'notification': the target pushes value changes (ADS device notifications, one per PLC variable, spanning its traced members; one wider than 1024 bytes is polled), checked every cycle time. 'poll': one sum read of every symbol per cycle time. A target needing more notifications than Max Notifications polls.",
           "enum": [
             "notification",
             "poll"
@@ -174,7 +174,7 @@
         "min_update_interval": {
           "type": "number",
           "title": "Min Update Interval (seconds)",
-          "description": "With notifications, a symbol that reports no change for this long is re-read and logged at the read time.",
+          "description": "With notifications, a variable that reports no change for this long is re-read and logged at the read time.",
           "default": 60.0,
           "minimum": 1.0,
           "maximum": 3600

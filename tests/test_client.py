@@ -176,7 +176,7 @@ async def test_wire_notifications_and_write(server: DemoServer):
     client = wire_client()
     async with running(client) as (_, rows):
         await wait_until(lambda: len(rows.of("MAIN", "fSine")) >= 5, 10.0)
-        assert client.status()["subscribed"] == 14
+        assert client.status()["subscribed"] == 9  # one per symbol-table entry, 14 leaves
         f = client.field("MAIN.bOut2")
         assert await client.write_value(f, True) is True
         assert struct.unpack("<?", server.plc.read(f.index_group, f.index_offset, 1))[0]
