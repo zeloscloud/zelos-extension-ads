@@ -78,6 +78,8 @@ TwinCAT accepts a client only from an AMS NetId it holds a route for.
 
 Plain ADS (TCP 48898) carries no encryption or authentication beyond the route: keep it on a trusted network.
 
+`add_route` sends the TwinCAT password in a form an eavesdropper can recover ([Beckhoff advisory 2017-002](https://download.beckhoff.com/download/Document/product-security/Advisories/advisory-2017-002.pdf), CVE-2017-16718), as XAE's Add Route does. Run it on a trusted network, or add the route on the target itself (XAE, `adstool`), which sends no credentials. Secure ADS (TLS, TCP 8016) is not supported.
+
 ### Every variable
 
 A target without a symbol map traces every scalar PLC variable it holds, read-only: the event is the POU or GVL (`MAIN`, `GVL_IO`), the field the variable, struct members and array elements flattened (`stMotor_fSpeed`, `arrTemps_2`). `TwinCAT_*`, `Constants`, `Global_Version`, `LREAL_CONST` and Beckhoff library globals (`Tc2_*`, `Tc3_*`) are left out unless `include` names them.
