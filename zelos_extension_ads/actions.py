@@ -246,7 +246,9 @@ def ethercat_read_sdo(
     "Add a route for this machine to a TwinCAT target, through Beckhoff's UDP handshake "
     "(the same as XAE's Add Route). The user name and password go to the target once "
     "and are not stored. Needed once per target from a machine without a TwinCAT "
-    "router (Linux, macOS); a TwinCAT host adds routes with XAE or adstool instead.",
+    "router (Linux, macOS); a TwinCAT host adds routes with XAE or adstool instead. "
+    "The password crosses the network recoverable (Beckhoff advisory 2017-002): run it "
+    "on a trusted network, or add the route on the target.",
     standalone=True,
 )
 @zelos_sdk.action.text("host", title="Target Host", description="IP address of the TwinCAT target")

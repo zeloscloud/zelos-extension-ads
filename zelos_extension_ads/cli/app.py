@@ -44,7 +44,7 @@ ADVANCED_DEFAULTS: dict[str, Any] = {
     "log_level": "INFO",
     "local_ams_net_id": "",
     "transport": "notification",
-    "max_notifications": 1000,
+    "max_notifications": 500,
     "min_update_interval": 60.0,
     "ethercat_interval": 1.0,
     "include": [],

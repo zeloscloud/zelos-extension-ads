@@ -42,6 +42,9 @@ _TAG_USER = 0x0D
 _TAG_PASSWORD = 0x02
 _TAG_HOSTNAME = 5
 _TAG_VERSION = 3
+_TAG_RESULT = 1  # add-route reply: u32 ADS result
+#: ADSERR_DEVICE_ACCESSDENIED (0x704): the target refused the credentials.
+ADS_ROUTE_REFUSED = 1796
 
 _router_lock = threading.Lock()
 _local_net_id: str | None = None
@@ -192,12 +195,13 @@ def add_route(
     timeout: float = 5.0,
 ) -> bool:
     """Add a route for `local_net_id` at `local_host` to the TwinCAT router at `host`
-    through Beckhoff's UDP handshake; False when the credentials are refused.
+    through Beckhoff's UDP handshake; False when the credentials are refused (ADS 1796),
+    RuntimeError naming any other ADS result.
 
     The credentials go into one UDP frame and are kept nowhere. The frame is the
     one pyads's `add_route_to_plc` sends, built here because that function misreads
     a refusal from TwinCAT 3.1.4026 (tag 1 value 0x0704, ADS 1796) as an unexpected
-    reply and raises instead of returning False.
+    reply and raises instead of returning False. The reply is read as AdsLib reads it.
     """
 
     def block(tag: int, text: str) -> bytes:
@@ -224,7 +228,37 @@ def add_route(
         sock.settimeout(timeout)
         sock.sendto(frame, (host, UDP_PORT))
         data, _ = sock.recvfrom(1024)
-    if len(data) < 32 or data[:4] != _UDP_MAGIC or data[11] != _RESPONSE:
+    code = parse_add_route_reply(data)
+    if code is None:
         raise RuntimeError(f"unexpected reply from {host}: {data.hex()}")
-    # Tag 1 carries the result: 0 added, 0x0704 (ADS 1796: not permitted) refused.
-    return data[26:29] == b"\x04\x00\x00"
+    if code == 0:
+        return True
+    if code == ADS_ROUTE_REFUSED:
+        return False
+    raise RuntimeError(f"{host} did not add the route: ADS error {code} (0x{code:X})")
+
+
+def parse_add_route_reply(data: bytes) -> int | None:
+    """The ADS result of an add-route reply (tag 1, a u32), None if malformed.
+
+    As Beckhoff's AdsLib `AddRemoteRoute`: other tags are skipped; tag 1 must be 4 bytes.
+    """
+    if (
+        len(data) < 24
+        or data[:4] != _UDP_MAGIC
+        or data[8:12] != bytes((_CMD_ADD_ROUTE, 0, 0, _RESPONSE))
+    ):
+        return None
+    count = struct.unpack_from("<I", data, 20)[0]
+    offset = 24
+    for _ in range(count):
+        if offset + 4 > len(data):
+            return None
+        tag, length = struct.unpack_from("<HH", data, offset)
+        offset += 4
+        if tag == _TAG_RESULT:
+            if length != 4 or offset + 4 > len(data):
+                return None
+            return struct.unpack_from("<I", data, offset)[0]
+        offset += length
+    return None

@@ -10,7 +10,7 @@ from tests.conftest import running, wait_until
 from zelos_extension_ads import actions
 from zelos_extension_ads.client import ADSClient
 from zelos_extension_ads.demo.plc import DEMO_ECAT_NET_ID, DEMO_NET_ID, DemoLink, DemoPlc
-from zelos_extension_ads.ethercat import MASTER_EVENT, MASTER_PORT, decode_sdo
+from zelos_extension_ads.ethercat import MASTER_EVENT, MASTER_PORT, al_state_name, decode_sdo
 
 
 async def test_ethercat_trace_and_actions():
@@ -50,3 +50,4 @@ async def test_ethercat_trace_and_actions():
     with pytest.raises(ValueError, match="EtherCAT diagnostics are off"):
         ADSClient(name="off")._require_ethercat()
     assert decode_sdo(b"\x01\x02\x03", "u16") == ("hex", "010203")
+    assert al_state_name(0x34) == "SAFEOP+ERROR+INVALID_VPRS"
