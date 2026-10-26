@@ -14,12 +14,14 @@ Two platform modes, decided by pyads at import:
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import socket
 import struct
 import threading
 from dataclasses import dataclass
 
+import ifaddr
 import pyads
 from pyads.ads import linux as ROUTERLESS
 
@@ -150,9 +152,23 @@ def parse_identify(data: bytes, host: str) -> Device | None:
     return device
 
 
+def broadcast_addresses() -> list[str]:
+    """The limited broadcast address, then each IPv4 interface's own: the limited one
+    leaves by the default route only, missing a PLC on a second interface."""
+    out = ["255.255.255.255"]
+    for adapter in ifaddr.get_adapters():
+        for ip in adapter.ips:
+            if not isinstance(ip.ip, str) or ip.ip.startswith("127.") or ip.network_prefix >= 31:
+                continue
+            net = ipaddress.IPv4Network(f"{ip.ip}/{ip.network_prefix}", strict=False)
+            if str(net.broadcast_address) not in out:
+                out.append(str(net.broadcast_address))
+    return out
+
+
 def identify(hosts: list[str], timeout: float = 2.0, broadcast: bool = False) -> list[Device]:
     """Routers that answer a UDP identify within `timeout`: each of `hosts`, and with
-    `broadcast` the limited broadcast address too. Nothing else is sent."""
+    `broadcast` every broadcast address too. Nothing else is sent."""
     found: dict[str, Device] = {}
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.bind(("", 0))
@@ -160,10 +176,11 @@ def identify(hosts: list[str], timeout: float = 2.0, broadcast: bool = False) ->
         frame = _identify_frame()
         if broadcast:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            try:
-                sock.sendto(frame, ("255.255.255.255", UDP_PORT))
-            except OSError as e:  # no broadcast-capable interface
-                logger.debug("broadcast failed: %s", e)
+            for address in broadcast_addresses():
+                try:
+                    sock.sendto(frame, (address, UDP_PORT))
+                except OSError as e:  # no broadcast-capable interface
+                    logger.debug("broadcast to %s failed: %s", address, e)
         waiting: set[str] = set()  # the addresses an answer is still expected from
         for host in hosts:
             try:

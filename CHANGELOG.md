@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Needs Zelos 26.0.10 or later.
 - Zelos AI runs Auto-configure without asking first: it only sends a UDP identify.
 
+### Fixed
+- Auto-configure broadcasts on every IPv4 interface, not only the default route's: a PLC on a second interface (Wi-Fi plus Ethernet to the PLC) is found.
+- Auto-configure matches a target entered by host name to the router answering from its address, and says a route is needed.
+- A target whose TCP 48898 does not answer (a firewall dropping it) fails the connect within `timeout`, naming the port, instead of waiting minutes in AdsLib's connect.
+- No asyncio traceback when the extension is stopped during its first connect.
+
 ---
 
 *For maintainers: When releasing, move items from [Unreleased] to a new version section:*

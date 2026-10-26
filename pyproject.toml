@@ -11,6 +11,7 @@ dependencies = [
     # 3.6: prebuilt AdsLib, Beckhoff RT Linux detection; <3.7: PyadsLink.close uses pyads internals
     "pyads>=3.6,<3.7",
     "rich-click>=1.8.0",
+    "ifaddr>=0.2,<0.3",
 ]
 
 [project.urls]
