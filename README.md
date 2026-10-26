@@ -154,7 +154,7 @@ just format       # ruff format + fix
 just check        # ruff lint + format check
 just test         # pytest (the wire tests need 127.0.0.1:48898 free)
 just hil          # against a real target: ZELOS_ADS_HOST=<ip> just hil
-just dev          # run app mode locally
+just run          # run app mode locally
 just demo         # built-in demo PLC
 just sim          # demo PLC on 127.0.0.1:48898 for any ADS client
 ```
@@ -162,7 +162,7 @@ just sim          # demo PLC on 127.0.0.1:48898 for any ADS client
 ## Links
 
 - [Zelos Documentation](https://docs.zeloscloud.io)
-- [SDK Guide](https://docs.zeloscloud.io/sdk)
+- [SDK Guide](https://docs.zeloscloud.io/latest/sdk/)
 - [pyads Documentation](https://pyads.readthedocs.io/)
 - [Beckhoff ADS Introduction](https://infosys.beckhoff.com/content/1033/tc3_ads_intro/index.html)
 - [GitHub Issues](https://github.com/zeloscloud/zelos-extension-ads/issues)

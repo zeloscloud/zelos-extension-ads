@@ -26,8 +26,7 @@ def test_tables_round_trip_and_flatten():
     temps = [by[f"MAIN.arrTemps[{i}]"] for i in range(4)]
     assert [t.index_offset - temps[0].index_offset for t in temps] == [0, 4, 8, 12]
     assert by["MAIN.bOut1"].comment == "demo output 1"
-    # The real table carries extras (GUIDs, attributes) inside entryLength: a
-    # padded entry parses the same.
+    # The real table carries GUIDs and attributes inside entryLength: padded, it parses the same.
     raw = sym.SymbolEntry("MAIN.nCycle", "UDINT", 0x4040, 0, 4, sym.ADST_UINT32, 8, "cycles")
     entry = sym.parse_symbols(encode_symbol(raw) + b"\0" * 8)
     assert len(entry) == 1 and entry[0] == raw

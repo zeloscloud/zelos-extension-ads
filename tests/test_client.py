@@ -4,23 +4,25 @@ AMS/TCP through pyads for the real transport path, recovery and actions."""
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import struct
+import tomllib
+from pathlib import Path
 
 import pytest
 import zelos_sdk
 from pyads.pyads_ex import ADSError
+from zelos_sdk.actions import ActionsRegistry
 
-from tests.conftest import running, server, wait_until, wire, wire_client
-from zelos_extension_ads import actions, ams
+from tests.conftest import running, wait_until, wire, wire_client
+from zelos_extension_ads import ACTION_PREFIX, actions, ams
 from zelos_extension_ads.cli import app
 from zelos_extension_ads.client import SYM_VERSION, ADSClient, ADSRunner, SharedSource
 from zelos_extension_ads.demo.plc import DEMO_NET_ID, DemoLink, DemoPlc
 from zelos_extension_ads.demo.server import DemoServer
 from zelos_extension_ads.symbols import HEALTH_EVENT, SymbolMap
 from zelos_extension_ads.transport import ADSIGRP_SYM_VERSION, is_connection_error, needs_resync
-
-_ = server  # fixture
 
 
 def demo_client(plc: DemoPlc | None = None, **kwargs) -> ADSClient:
@@ -171,6 +173,11 @@ def test_config_resolution_follows_advanced():
         app.resolve_targets({"servers": []}, app.resolve_advanced({}))
 
 
+def test_actions_register_under_the_manifest_name():
+    manifest = tomllib.loads((Path(__file__).parents[1] / "extension.toml").read_text())
+    assert manifest["name"] == ACTION_PREFIX
+
+
 def test_error_classes():
     assert is_connection_error(ADSError(7)) and is_connection_error(ADSError(1861))
     assert is_connection_error(OSError("gone"))
@@ -185,6 +192,25 @@ def test_add_route_reply():
         reply = head + struct.pack("<I", 2) + struct.pack("<HH", 5, 1) + b"x"
         assert ams.parse_add_route_reply(reply + struct.pack("<HHI", 1, 4, code)) == code
     assert ams.parse_add_route_reply(head + struct.pack("<IHHH", 1, 1, 2, 0)) is None
+
+
+def test_auto_configure_without_the_form_checks_the_saved_targets(tmp_path, monkeypatch):
+    saved = tmp_path / "config.json"
+    saved.write_text(json.dumps({"targets": [{"host": "plc1"}]}))
+    monkeypatch.setenv("ZELOS_CONFIG_PATH", str(saved))
+    monkeypatch.chdir(Path(__file__).parents[1])
+    asked = []
+
+    def identify(hosts, timeout=2.0, broadcast=False):
+        asked.append(hosts)
+        return [ams.Device("plc1", "5.1.2.3.1.1", "PLC1")]
+
+    monkeypatch.setattr(ams, "identify", identify)
+    registry = ActionsRegistry()
+    actions.register_actions(registry)
+    result = registry.execute("auto_config", {}).value
+    assert asked == [["plc1"]]
+    assert result["config"]["targets"][0]["ams_net_id"] == "5.1.2.3.1.1"
 
 
 # ─── Over the wire: pyads -> AMS/TCP -> demo PLC ────────────────────────────
@@ -207,7 +233,8 @@ async def test_wire_notifications_and_write(server: DemoServer):
 
 
 @wire
-async def test_wire_poll(server: DemoServer):
+@pytest.mark.usefixtures("server")
+async def test_wire_poll():
     client = wire_client(transport="poll")
     async with running(client) as (_, rows):
         await wait_until(lambda: len(rows.of("MAIN", "nCycle")) >= 5, 10.0)
@@ -239,7 +266,7 @@ async def test_wire_recovers_after_server_restart(server: DemoServer, caplog):
 async def test_unreachable_at_start_stops_the_extension(caplog):
     """First contact is required: nothing on 48898 stops the runner with one ERROR."""
     client = wire_client()
-    client.start(SharedSource(__import__("zelos_sdk").TraceSource("ADS")))
+    client.start(SharedSource(zelos_sdk.TraceSource("ADS")))
     runner = ADSRunner([client])
     await asyncio.wait_for(runner._run_async(), 15.0)
     assert runner.failed_at_start == [client]
