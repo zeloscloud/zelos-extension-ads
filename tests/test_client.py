@@ -76,7 +76,9 @@ async def test_symbol_map_names_and_scales():
         await wait_until(lambda: len(rows.of("motor", "rpm")) >= 2, 10.0)
     assert client._trace_events["motor"].name == "motor"
     assert client._declared["motor"] == [("rpm", zelos_sdk.DataType.Float64, "")]
-    assert rows.of("motor", "rpm")[0][1] == pytest.approx(1500 * 0.0123)
+    # The demo's rpm drifts from 1500 (1500 + 500 sin(t/5)): check the scale, not the instant.
+    raw = rows.of("motor", "rpm")[0][1] / 0.0123
+    assert raw == pytest.approx(round(raw)) and 1000 <= raw <= 2000
     assert client.status()["errors"] == 0
 
 
