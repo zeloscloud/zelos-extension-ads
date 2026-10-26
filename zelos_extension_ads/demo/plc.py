@@ -422,8 +422,7 @@ class DemoPlc:
     def subscribe(
         self, group: int, offset: int, size: int, cycle_ms: int, callback: NotifyCallback
     ) -> int:
-        # The current value goes out on the next task cycle, as TwinCAT sends one
-        # on registration: `last` is empty so the first check sees a change.
+        # TwinCAT sends the value on registration: an empty `last` makes the first check a change.
         with self._lock:
             self._find(group, offset, size)
             handle, self._next = self._next, self._next + 1

@@ -123,8 +123,7 @@ class DemoServer:
         except ADSError as e:
             result, body = e.err_code, b""
         payload = struct.pack("<I", result) + body
-        # The reply comes from the device the request addressed (the PLC runtime's
-        # NetId, or the EtherCAT master's).
+        # The reply comes from the addressed device: the PLC runtime or the EtherCAT master.
         header = _AMS_HEADER.pack(
             source, sport, target, tport, cmd, STATE_RESPONSE, len(payload), 0, invoke
         )

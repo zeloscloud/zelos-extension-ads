@@ -294,8 +294,7 @@ def add_route(
             "`adstool <host> addroute`; this action is for machines without one"
         )
     local_host = ams.outbound_ip(host)
-    # Running, the process presents one NetId: that is the one to route, whatever
-    # interface `host` sits on; stopped, derive it as the next start will.
+    # Running, route the one NetId the process presents; stopped, derive it as the next start will.
     net_id = ams.parse_net_id(
         local_ams_net_id or ams.local_net_id() or _advanced_local_net_id() or local_host + ".1.1"
     )

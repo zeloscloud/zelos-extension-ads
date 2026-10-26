@@ -11,7 +11,7 @@ import pytest
 import zelos_sdk
 from pyads.pyads_ex import ADSError
 
-from tests.conftest import running, server, wait_until, wire, wire_client
+from tests.conftest import running, wait_until, wire, wire_client
 from zelos_extension_ads import actions, ams
 from zelos_extension_ads.cli import app
 from zelos_extension_ads.client import SYM_VERSION, ADSClient, ADSRunner, SharedSource
@@ -19,8 +19,6 @@ from zelos_extension_ads.demo.plc import DEMO_NET_ID, DemoLink, DemoPlc
 from zelos_extension_ads.demo.server import DemoServer
 from zelos_extension_ads.symbols import HEALTH_EVENT, SymbolMap
 from zelos_extension_ads.transport import ADSIGRP_SYM_VERSION, is_connection_error, needs_resync
-
-_ = server  # fixture
 
 
 def demo_client(plc: DemoPlc | None = None, **kwargs) -> ADSClient:
@@ -207,7 +205,8 @@ async def test_wire_notifications_and_write(server: DemoServer):
 
 
 @wire
-async def test_wire_poll(server: DemoServer):
+@pytest.mark.usefixtures("server")
+async def test_wire_poll():
     client = wire_client(transport="poll")
     async with running(client) as (_, rows):
         await wait_until(lambda: len(rows.of("MAIN", "nCycle")) >= 5, 10.0)
@@ -239,7 +238,7 @@ async def test_wire_recovers_after_server_restart(server: DemoServer, caplog):
 async def test_unreachable_at_start_stops_the_extension(caplog):
     """First contact is required: nothing on 48898 stops the runner with one ERROR."""
     client = wire_client()
-    client.start(SharedSource(__import__("zelos_sdk").TraceSource("ADS")))
+    client.start(SharedSource(zelos_sdk.TraceSource("ADS")))
     runner = ADSRunner([client])
     await asyncio.wait_for(runner._run_async(), 15.0)
     assert runner.failed_at_start == [client]

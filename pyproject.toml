@@ -1,8 +1,8 @@
 [project]
 name = "zelos-extension-ads"
 version = "0.1.0"
-description = "Beckhoff TwinCAT ADS extension for Zelos: trace PLC variables by notification or polling, read and write symbols"
-authors = [{ name = "Zelos Cloud", email = "support@zeloscloud.io" }]
+description = "Trace Beckhoff TwinCAT PLC variables over ADS by notification or polling. Read and write symbols, add routes, and read EtherCAT diagnostics. On Linux and macOS, add this machine's route to each target from the app; Windows with TwinCAT and Beckhoff devices use the routes in their own TwinCAT router."
+authors = [{ name = "Zelos", email = "support@zeloscloud.io" }]
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -10,22 +10,16 @@ keywords = ["zelos", "extension", "ads", "twincat", "beckhoff", "industrial", "p
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "Intended Audience :: Manufacturing",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator",
+    "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    # 0.0.13a1 floor, as the other agent extensions: hidden/standalone actions
-    # (auto_config, add_route) need the at-rest harness, and a prerelease floor
-    # on the direct dep is what lets uv resolve one.
     "zelos-sdk>=0.0.13a1",
-    # 3.6 floor: prebuilt AdsLib for macOS/Linux x86_64+aarch64 (no native build at
-    # install) and the Beckhoff RT Linux detection that uses the device's own router.
-    # 3.7 ceiling: `PyadsLink.close` reaches into pyads internals (port, callback store).
+    # 3.6: prebuilt AdsLib, Beckhoff RT Linux detection; <3.7: PyadsLink.close uses pyads internals
     "pyads>=3.6,<3.7",
     "rich-click>=1.8.0",
 ]
@@ -34,20 +28,22 @@ dependencies = [
 Homepage = "https://github.com/zeloscloud/zelos-extension-ads"
 Repository = "https://github.com/zeloscloud/zelos-extension-ads"
 Issues = "https://github.com/zeloscloud/zelos-extension-ads/issues"
-Documentation = "https://docs.zeloscloud.io/extensions"
+Documentation = "https://docs.zeloscloud.io/app/extensions/"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    "pytest>=8.4.2",
-    "pytest-asyncio>=0.24.0",
-    "pre-commit>=4.3.0",
-    "ruff>=0.14.2",
-    "tomli>=2.3.0; python_version < '3.11'",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pre-commit>=4.6.2",
+    "ruff>=0.16.10",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+required-version = ">=0.9.5"
 
 [tool.hatch.build.targets.wheel]
 packages = ["zelos_extension_ads"]
@@ -56,10 +52,9 @@ packages = ["zelos_extension_ads"]
 testpaths = ["tests"]
 addopts = "--log-cli-level=INFO"
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
-target-version = "py311"
+target-version = 'py311'
 line-length = 100
 
 [tool.ruff.lint]
@@ -76,9 +71,3 @@ select = [
 ignore = [
     "B008",   # function call in defaults (common in decorators)
 ]
-
-[tool.ruff.lint.per-file-ignores]
-"scripts/*.py" = ["PTH123"]  # Allow open() in scripts
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"

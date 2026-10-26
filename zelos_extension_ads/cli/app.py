@@ -254,8 +254,7 @@ def serve(clients: list[ADSClient], prefix: str, local_ams_net_id: str = "") -> 
     runner.run()
     code = 1 if runner.failed_at_start else 0
     if runner.wedged:
-        # pyads is blocking the worker; a normal exit would join it (atexit) for as
-        # long as AdsLib takes. Flush what we can and leave, as the Modbus extension.
+        # atexit would join the blocked pyads worker for as long as AdsLib takes: flush and leave.
         logger.warning(
             "Link call to %s never returned; forcing exit",
             ", ".join(c.name for c in runner.wedged),
@@ -296,7 +295,7 @@ def run_config(config: dict[str, Any], demo: bool = False) -> None:
     prefix = trace_name(str(advanced["prefix"]))
 
     if demo:
-        from zelos_extension_ads.demo import DEMO_NET_ID, DemoLink, DemoPlc
+        from zelos_extension_ads.demo.plc import DEMO_NET_ID, DemoLink, DemoPlc
         from zelos_extension_ads.ethercat import MASTER_PORT
 
         logger.info("Demo mode: using the built-in demo PLC and its EtherCAT segment")
