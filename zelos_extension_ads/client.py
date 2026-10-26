@@ -51,14 +51,11 @@ TRANSPORTS = ("notification", "poll")
 HEALTH_INTERVAL = 1.0
 # Notifications are coalesced this long before logging: one row per POU and timestamp.
 FLUSH_SECONDS = 0.02
-# One notification spans a symbol-table entry's traced leaves; a wider span is polled:
-# bounds the per-change payload (Beckhoff advises sum reads for bulk data).
+# A notification span wider than this is polled: Beckhoff advises sum reads for bulk data.
 NOTIFY_MAX_BYTES = 1024
 # Staleness sweep steps per min_update_interval.
 SWEEP_STEPS = 4
-# Watched values, read with every health probe and subscribed in notification mode; a
-# change means the addresses held are stale. The symbol version does not move on an
-# online change, which can still move variables; TwinCAT 3's counter does.
+# Stale-address watches: online changes keep the symbol version; TwinCAT 3's counter moves.
 STALE_TABLE = "symbol table changed"
 ONLINE_CHANGE = "online change"
 ONLINE_CHANGE_CNT = "TwinCAT_SystemInfoVarList._AppInfo.OnlineChangeCnt"
@@ -279,7 +276,7 @@ class ADSClient:
         self._error_count = 0
         self._skew_ms = 0.0
 
-        # Trace plumbing; see _init_trace_source / _rotate_source.
+        # Trace plumbing; see start / _rotate_source.
         self._shared: SharedSource | None = None
         self._trace_events: dict[str, Any] = {}
         self._declared: dict[str, list[Declared]] = {}
@@ -1164,8 +1161,7 @@ class ADSRunner:
         self._stop_event = asyncio.Event()
         # Targets whose first connect failed: the caller exits 1.
         self.failed_at_start: list[ADSClient] = []
-        # Targets whose worker is still inside a link call after shutdown: the caller
-        # must not wait for it (atexit would join the thread).
+        # Targets whose worker is still inside a link call after shutdown: atexit must not join it.
         self.wedged: list[ADSClient] = []
 
     def run(self) -> None:

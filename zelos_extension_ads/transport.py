@@ -31,8 +31,7 @@ ADSIGRP_SYM_UPLOAD = 0xF00B
 ADSIGRP_SYM_DT_UPLOAD = 0xF00E
 ADSIGRP_SYM_UPLOADINFO2 = 0xF00F
 ADSIGRP_SUMUP_READ = 0xF080
-# Sub-requests per sum read: Beckhoff's recommended ceiling, not a frame limit; pyads
-# uses the same chunk.
+# Sub-requests per sum read: Beckhoff's recommended ceiling, not a frame limit, as pyads chunks.
 SUM_CHUNK = 500
 
 # Windows FILETIME (100 ns since 1601) -> Unix ns.

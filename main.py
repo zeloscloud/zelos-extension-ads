@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Zelos Beckhoff ADS Extension - CLI entry point.
 
 Modes:
@@ -22,13 +21,7 @@ import time
 
 import rich_click as click
 
-from zelos_extension_ads import ACTION_PREFIX as _ACTION_PREFIX
 from zelos_extension_ads.cli import app as app_mode
-
-#: Re-exported so a packaging-time action inventory - which reads this entry
-#: module - sees the same namespace the live registration uses. See the
-#: definition in `zelos_extension_ads/__init__.py`.
-ACTION_PREFIX = _ACTION_PREFIX
 
 # UTC ISO 8601 with ms, matching the SDK's Rust tracing lines in the same log stream
 logging.Formatter.converter = time.gmtime
