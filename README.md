@@ -10,7 +10,7 @@ A Zelos extension for Beckhoff TwinCAT ADS. Trace PLC variables from any TwinCAT
 - 🏭 **Multiple targets**: Any number in one extension; one unreachable target never stalls the others
 - ✏️ **Read, write & state actions**: Interactive symbol access and the PLC's run state from the Zelos App
 - 🔗 **EtherCAT diagnostics**: The TwinCAT EtherCAT master's state, frame counters and every slave's state, link status, identity and CRC counters; CoE reads from the app
-- 🔑 **Routes from the app**: Add this machine's route to a target with its credentials, kept nowhere
+- 🔑 **Routes from the app**: Add this machine's route to a target with its credentials, never stored by the extension
 - 🧪 **Demo mode**: Built-in demo PLC for testing without hardware
 
 ## Quick Start

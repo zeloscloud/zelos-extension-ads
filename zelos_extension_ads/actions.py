@@ -245,7 +245,7 @@ def ethercat_read_sdo(
     "Add Route",
     "Add a route for this machine to a TwinCAT target, through Beckhoff's UDP handshake "
     "(the same as XAE's Add Route). The user name and password go to the target once "
-    "and are not stored. Needed once per target from a machine without a TwinCAT "
+    "and the extension stores neither. Needed once per target from a machine without a TwinCAT "
     "router (Linux, macOS); a TwinCAT host adds routes with XAE or adstool instead. "
     "The password crosses the network recoverable (Beckhoff advisory 2017-002): run it "
     "on a trusted network, or add the route on the target.",
@@ -260,7 +260,7 @@ def ethercat_read_sdo(
 @zelos_sdk.action.text(
     "password",
     title="Password",
-    description="That user's password; sent once, never stored",
+    description="That user's password; sent once, not stored by the extension. Turn off the action panel's Persist Parameters to keep it out of the layout",
     widget="password",
 )
 @zelos_sdk.action.text(
