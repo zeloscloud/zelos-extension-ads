@@ -69,7 +69,7 @@ async def test_bench_poll():
 
 
 async def test_bench_ethercat():
-    """The master (target NetId with .2.1) is in OP and lists its slaves; a CoE read
+    """The master (discovered on the I/O server) is in OP and lists its slaves; a CoE read
     answers or names the missing mailbox."""
     client = bench_client(ethercat=True, ethercat_interval=0.5)
     async with running(client) as (_, rows):

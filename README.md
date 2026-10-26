@@ -10,7 +10,7 @@ A Zelos extension for Beckhoff TwinCAT ADS. Trace PLC variables from any TwinCAT
 - 🏭 **Multiple targets**: Any number in one extension; one unreachable target never stalls the others
 - ✏️ **Read, write & state actions**: Interactive symbol access and the PLC's run state from the Zelos App
 - 🔗 **EtherCAT diagnostics**: The TwinCAT EtherCAT master's state, frame counters and every slave's state, link status, identity and CRC counters; CoE reads from the app
-- 🔑 **Routes from the app**: Add this machine's route to a target with its credentials, kept nowhere
+- 🔑 **Routes from the app**: Add this machine's route to a target with its credentials, never stored by the extension
 - 🧪 **Demo mode**: Built-in demo PLC for testing without hardware
 
 ## Quick Start
@@ -46,7 +46,7 @@ In the app:
 | Transport | `notification` | `notification` (PLC pushes changes) or `poll` |
 | Include / Exclude | | Symbol globs (`MAIN.**`, `**.bDebug`) |
 | EtherCAT Diagnostics | off | Also trace the target's [EtherCAT master](#ethercat-diagnostics) |
-| EtherCAT AMS NetId | target NetId with `.2.1` | The EtherCAT device's own NetId (its EtherCAT tab in XAE) |
+| EtherCAT AMS NetId | first EtherCAT device | The EtherCAT device's own NetId (its EtherCAT tab in XAE) |
 
 ### Advanced
 
@@ -59,7 +59,7 @@ Applies to every target unless the target overrides it.
 | `log_level` | `INFO` | Logging verbosity |
 | `local_ams_net_id` | derived | The one NetId this machine presents to every target (Linux, macOS); empty = local IP toward the first target + `.1.1` |
 | `transport` | `notification` | Default transport |
-| `max_notifications` | `1000` | Symbols per target above which it polls |
+| `max_notifications` | `500` | Notifications per target (one per PLC variable traced, plus the symbol-version and online-change-counter ones) above which it polls; Beckhoff allows 550 per ADS port |
 | `min_update_interval` | `60` | Re-read a subscribed symbol silent this long (s); log an unchanged EtherCAT slave again this often |
 | `ethercat_interval` | `1.0` | EtherCAT master and slave read period (s) |
 | `include` / `exclude` | | Symbol globs; TwinCAT's own GVLs are excluded unless included |
@@ -78,13 +78,15 @@ TwinCAT accepts a client only from an AMS NetId it holds a route for.
 
 Plain ADS (TCP 48898) carries no encryption or authentication beyond the route: keep it on a trusted network.
 
+`add_route` sends the TwinCAT password in a form an eavesdropper can recover ([Beckhoff advisory 2017-002](https://download.beckhoff.com/download/Document/product-security/Advisories/advisory-2017-002.pdf), CVE-2017-16718), as XAE's Add Route does. Run it on a trusted network, or add the route on the target itself (XAE, `adstool`), which sends no credentials. Secure ADS (TLS, TCP 8016) is not supported.
+
 ### Every variable
 
 A target without a symbol map traces every scalar PLC variable it holds, read-only: the event is the POU or GVL (`MAIN`, `GVL_IO`), the field the variable, struct members and array elements flattened (`stMotor_fSpeed`, `arrTemps_2`). `TwinCAT_*`, `Constants`, `Global_Version`, `LREAL_CONST` and Beckhoff library globals (`Tc2_*`, `Tc3_*`) are left out unless `include` names them.
 
 ### EtherCAT diagnostics
 
-A target with EtherCAT Diagnostics on also reads the TwinCAT EtherCAT master through its own ADS device (AMS port 0xFFFF on the EtherCAT device's NetId, by convention the target's NetId with `.2.1`) every `ethercat_interval`. No PLC code or license is involved; the master is in OP whenever the I/O runs, PLC or not.
+A target with EtherCAT Diagnostics on also reads the TwinCAT EtherCAT master through its own ADS device (AMS port 0xFFFF on the EtherCAT device's NetId, asked on every connect from the runtime's I/O server on AMS port 300 as Beckhoff's AdsTool does; the first EtherCAT device unless `ethercat_ams_net_id` names one) every `ethercat_interval`. No PLC code or license is involved; the master is in OP whenever the I/O runs, PLC or not.
 
 | Event | Fields |
 |---|---|

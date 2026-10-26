@@ -26,12 +26,13 @@ logger = logging.getLogger(__name__)
 ADSIGRP_SYM_HNDBYNAME = 0xF003  # name -> handle
 ADSIGRP_SYM_VALBYHND = 0xF005  # value by handle (index offset)
 ADSIGRP_SYM_RELEASEHND = 0xF006
-ADSIGRP_SYM_VERSION = 0xF008  # one byte TwinCAT bumps per online change
+ADSIGRP_SYM_VERSION = 0xF008  # one byte TwinCAT bumps per download, not online change
 ADSIGRP_SYM_UPLOAD = 0xF00B
 ADSIGRP_SYM_DT_UPLOAD = 0xF00E
 ADSIGRP_SYM_UPLOADINFO2 = 0xF00F
 ADSIGRP_SUMUP_READ = 0xF080
-# TwinCAT bounds one sum request; pyads uses the same chunk.
+# Sub-requests per sum read: Beckhoff's recommended ceiling, not a frame limit; pyads
+# uses the same chunk.
 SUM_CHUNK = 500
 
 # Windows FILETIME (100 ns since 1601) -> Unix ns.
