@@ -12,7 +12,7 @@ import zelos_sdk
 from pyads.pyads_ex import ADSError
 
 from tests.conftest import running, server, wait_until, wire, wire_client
-from zelos_extension_ads import actions, ams
+from zelos_extension_ads import actions, ams, autoconfig
 from zelos_extension_ads.cli import app
 from zelos_extension_ads.client import SYM_VERSION, ADSClient, ADSRunner, SharedSource
 from zelos_extension_ads.demo.plc import DEMO_NET_ID, DemoLink, DemoPlc
@@ -187,6 +187,16 @@ def test_add_route_reply():
     assert ams.parse_add_route_reply(head + struct.pack("<IHHH", 1, 1, 2, 0)) is None
 
 
+def test_auto_config_resolves_a_host_name(monkeypatch):
+    """A router answers from its IP: a DNS name in the form must still match it."""
+    device = ams.Device(host="10.0.0.5", net_id="5.1.2.3.1.1", name="CX-1")
+    monkeypatch.setattr(ams, "identify", lambda hosts, timeout: [device])
+    monkeypatch.setattr(autoconfig.socket, "gethostbyname", lambda host: "10.0.0.5")
+    result = autoconfig.check_targets([{"host": "plc.example"}])
+    assert result["status"] == "success"
+    assert result["config"]["targets"] == [{"host": "plc.example", "ams_net_id": "5.1.2.3.1.1"}]
+
+
 # ─── Over the wire: pyads -> AMS/TCP -> demo PLC ────────────────────────────
 
 
@@ -243,4 +253,6 @@ async def test_unreachable_at_start_stops_the_extension(caplog):
     runner = ADSRunner([client])
     await asyncio.wait_for(runner._run_async(), 15.0)
     assert runner.failed_at_start == [client]
-    assert "Target 'demo' (127.0.0.1): cannot connect" in caplog.text
+    assert "Target 'demo' (127.0.0.1): cannot connect: no TCP connection to 127.0.0.1:48898" in (
+        caplog.text
+    )

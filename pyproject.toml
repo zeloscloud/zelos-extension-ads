@@ -28,6 +28,7 @@ dependencies = [
     # 3.7 ceiling: `PyadsLink.close` reaches into pyads internals (port, callback store).
     "pyads>=3.6,<3.7",
     "rich-click>=1.8.0",
+    "ifaddr>=0.2,<0.3",
 ]
 
 [project.urls]
