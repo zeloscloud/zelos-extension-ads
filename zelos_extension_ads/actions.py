@@ -260,7 +260,8 @@ def ethercat_read_sdo(
 @zelos_sdk.action.text(
     "password",
     title="Password",
-    description="That user's password; sent once, not stored by the extension. Turn off the action panel's Persist Parameters to keep it out of the layout",
+    description="That user's password; sent once, not stored by the extension. Turn off "
+    "the action panel's Persist Parameters to keep it out of the layout",
     widget="password",
 )
 @zelos_sdk.action.text(
