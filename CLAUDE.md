@@ -32,6 +32,7 @@ just sim          # demo PLC behind AMS/TCP on 127.0.0.1:48898
 | `tests/test_symbols.py` | Tables, flattening, names, filters, values, map |
 | `tests/test_client.py` | Client through `DemoLink` (transports, map, actions, config) and over the wire (pyads: notifications, poll, recovery, start failure) |
 | `tests/test_ethercat.py` | EtherCAT trace and actions through the demo master |
+| `tests/test_action_flags.py` | Every action's `read_only` and `hidden` flags |
 | `tests/test_hil.py` | Real target, `ZELOS_ADS_HOST` only |
 
 ## Architecture
@@ -58,7 +59,7 @@ just sim          # demo PLC behind AMS/TCP on 127.0.0.1:48898
 ### Actions
 
 - Free functions, `target` optional with one target. Failure convention: raise. `read_symbol` / `write_symbol` resolve the type against the last upload (every scalar, not only traced ones). `write_symbol` writes by handle and reads back through it; ADS 1808 (symbol gone) is a ValueError.
-- `add_route` and `auto_config` are standalone (run with the extension stopped); the schema's `ui:options.autoconfig` names the latter.
+- `add_route` and `auto_config` are standalone (run with the extension stopped); the schema's `ui:options.autoconfig` names the latter. `auto_config` is `read_only` (it only sends a UDP identify), so Zelos AI runs it without asking first.
 
 ### Demo
 

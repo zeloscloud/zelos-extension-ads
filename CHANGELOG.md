@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Needs Zelos 26.0.10 or later.
+- Zelos AI runs Auto-configure without asking first: it only sends a UDP identify.
 
 ---
 
