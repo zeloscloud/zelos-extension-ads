@@ -61,7 +61,7 @@ SWEEP_STEPS = 4
 # change means the addresses held are stale. The symbol version does not move on an
 # online change, which can still move variables; TwinCAT 3's counter does.
 STALE_TABLE = "symbol table changed"
-ONLINE_CHANGE = "online change"
+ONLINE_CHANGE = "online change or download"
 ONLINE_CHANGE_CNT = "TwinCAT_SystemInfoVarList._AppInfo.OnlineChangeCnt"
 SYM_VERSION = (ADSIGRP_SYM_VERSION, 0, 1)
 ETHERCAT_FIX = (
@@ -846,7 +846,13 @@ class ADSClient:
     async def _poll_health(self) -> None:
         """ReadState, and the watched values: polled addresses go stale silently."""
         assert self._link is not None
-        self.plc_state = await self._call(self._link.read_state)
+        before, self.plc_state = self.plc_state[0], await self._call(self._link.read_state)
+        if self.plc_state[0] != before:
+            self._log.info(
+                "PLC %s -> %s",
+                ADS_STATES.get(before, str(before)),
+                ADS_STATES.get(self.plc_state[0], str(self.plc_state[0])),
+            )
         for address in self._watched:
             reason = self._changed(address, await self._call(self._read, address))
             if reason:
