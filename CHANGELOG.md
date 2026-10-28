@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI: app mode, `demo`, `demo-server`, `trace <host> [map]`.
 - EtherCAT diagnostics per target (`ethercat`, off by default): the TwinCAT EtherCAT master read through its own ADS device (AMS port 0xFFFF on `ethercat_ams_net_id`, default the first EtherCAT device the runtime's I/O server lists on AMS port 300) every `advanced.ethercat_interval` (1 s). `_ethercat` carries the master state, slave count and cyclic/acyclic frame and lost-frame counters; `_ethercat/<position>_<name>` each slave's AL state, link status, `lost`, per-port CRC counters and identity, on change and every `min_update_interval`. Names and fields follow the EtherCAT extension. Actions `ethercat_slaves` and `ethercat_read_sdo` (CoE upload on the slave's station-address port; a slave without a mailbox is a clear error), both read-only. `trace --ethercat` on the CLI; the demo PLC carries a four-terminal segment.
 
+### Fixed
+- Auto-configure broadcasts on every IPv4 interface, not only the default route's: a PLC on a second interface (Wi-Fi plus Ethernet to the PLC) is found.
+- Auto-configure matches a target entered by host name to the router answering from its address, and says a route is needed.
+- A target whose TCP 48898 does not answer (a firewall dropping it) fails the connect within `timeout`, naming the port, instead of waiting minutes in AdsLib's connect.
+- `add_route` derives the local NetId toward the host (or Advanced > Local AMS NetId) instead of reusing the running extension's: re-adding that NetId from another interface moved its existing route.
+- PLC state changes (RUN, STOP) are logged; a download is logged as "online change or download", not "online change".
+- No asyncio traceback when the extension is stopped during its first connect.
+
 ---
 
 *For maintainers: When releasing, move items from [Unreleased] to a new version section:*

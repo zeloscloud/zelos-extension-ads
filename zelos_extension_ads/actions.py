@@ -269,9 +269,8 @@ def ethercat_read_sdo(
     title="Local AMS NetId",
     required=False,
     default="",
-    description="The NetId to route to this machine; empty uses the one the running "
-    "extension presents, else derives it as it would (Advanced > Local AMS NetId, else "
-    "this machine's IP toward the target + .1.1)",
+    description="The NetId to route to this machine; empty uses Advanced > Local AMS "
+    "NetId, else this machine's IP toward the target + .1.1",
 )
 @zelos_sdk.action.text(
     "route_name",
@@ -294,11 +293,10 @@ def add_route(
             "`adstool <host> addroute`; this action is for machines without one"
         )
     local_host = ams.outbound_ip(host)
-    # Running, the process presents one NetId: that is the one to route, whatever
-    # interface `host` sits on; stopped, derive it as the next start will.
-    net_id = ams.parse_net_id(
-        local_ams_net_id or ams.local_net_id() or _advanced_local_net_id() or local_host + ".1.1"
-    )
+    # The target matches a route by NetId and address together, and re-adding a NetId
+    # moves its route: derive it toward `host` as a start would, never reuse the
+    # running process's, which may belong to another interface's route.
+    net_id = ams.parse_net_id(local_ams_net_id or _advanced_local_net_id() or local_host + ".1.1")
     name = route_name.strip() or socket.gethostname()
     try:
         added = ams.add_route(host, username, password, net_id, local_host, name)
@@ -306,8 +304,12 @@ def add_route(
         raise TimeoutError(f"no answer from {host} on UDP 48899") from e
     if not added:
         raise ValueError(f"{host} refused the credentials for user '{username}'")
+    message = f"Route '{name}' for {net_id} at {local_host} added on {host}"
+    running = ams.local_net_id()
+    if running and running != net_id:
+        message += f"; this extension presents {running} until it restarts"
     return {
-        "message": f"Route '{name}' for {net_id} at {local_host} added on {host}",
+        "message": message,
         "host": host,
         "local_ams_net_id": net_id,
         "local_host": local_host,

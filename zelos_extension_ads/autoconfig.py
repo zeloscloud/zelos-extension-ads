@@ -10,6 +10,7 @@ listed without a route, so a found device becomes one target on AMS port 851.
 from __future__ import annotations
 
 import logging
+import socket
 from typing import Any
 
 from zelos_extension_ads import ams
@@ -65,19 +66,24 @@ def check_targets(targets: list[dict[str, Any]]) -> dict[str, Any]:
         )
     if not found:
         return {"status": "error", "message": " ".join(notes)}
-    return {"status": "success", "message": " ".join(notes), "config": {"targets": out}}
+    message = " ".join(notes) + _route_note()
+    return {"status": "success", "message": message, "config": {"targets": out}}
 
 
 def _resolve(
     host: str, by_host: dict[str, ams.Device], by_name: dict[str, ams.Device]
 ) -> ams.Device | None:
-    """The device that answered for `host`: by the address it answered from, else by
-    its host name (a name in the form answers from its IP)."""
+    """The device that answered for `host`: by the address it answered from, that of
+    the name in the form, else the router's own host name."""
     if host in by_host:
         return by_host[host]
     if host in ("localhost", "127.0.0.1"):
         return by_host.get("127.0.0.1") or by_host.get("localhost")
-    return by_name.get(host.lower())
+    try:
+        address = socket.gethostbyname(host)
+    except OSError:
+        address = ""
+    return by_host.get(address) or by_name.get(host.lower())
 
 
 def probe() -> dict[str, Any]:
@@ -87,15 +93,20 @@ def probe() -> dict[str, Any]:
         return {
             "status": "error",
             "message": "No TwinCAT router answered on this machine or its network (UDP 48899 "
-            "broadcast). Add a target with its host and AMS NetId.",
+            "broadcast; one behind a router or VPN does not hear it). Add a target with its "
+            "host, then Auto-configure again to fill in its AMS NetId.",
         }
     taken: set[str] = set()
     targets = [_entry(d, taken) for d in devices]
     found = "; ".join(_describe(d) for d in devices)
-    message = f"Found {found}. Each is set to AMS port 851 (the first PLC)."
-    if not ams.native_router():
-        message += (
-            " A target must hold a route for this machine before the first start: "
-            "add_route action, or TwinCAT XAE."
-        )
+    message = f"Found {found}. Each is set to AMS port 851 (the first PLC)." + _route_note()
     return {"status": "success", "message": message, "config": {"targets": targets}}
+
+
+def _route_note() -> str:
+    if ams.native_router():
+        return ""
+    return (
+        " A target must hold a route for this machine before the first start: "
+        "add_route action, or TwinCAT XAE."
+    )

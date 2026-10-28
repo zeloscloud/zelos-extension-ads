@@ -76,6 +76,8 @@ TwinCAT accepts a client only from an AMS NetId it holds a route for.
 | Linux or macOS | Once per target: `add_route` action with the target's host and a TwinCAT user. The route names this machine's NetId (`local_ams_net_id`, default local IP + `.1.1`). Or add it in TwinCAT XAE. Targets on different networks share the one NetId; run `add_route` against each, which registers this machine's IP on that network |
 | Windows with TwinCAT, or a Beckhoff device tracing another | Add the route in that router (XAE, `adstool addroute`); this extension uses it |
 
+The target must also accept TCP 48898 from this machine: Beckhoff RT Linux's firewall allows only Secure ADS (TCP 8016) by default.
+
 Plain ADS (TCP 48898) carries no encryption or authentication beyond the route: keep it on a trusted network.
 
 `add_route` sends the TwinCAT password in a form an eavesdropper can recover ([Beckhoff advisory 2017-002](https://download.beckhoff.com/download/Document/product-security/Advisories/advisory-2017-002.pdf), CVE-2017-16718), as XAE's Add Route does. Run it on a trusted network, or add the route on the target itself (XAE, `adstool`), which sends no credentials. Secure ADS (TLS, TCP 8016) is not supported.
@@ -97,7 +99,7 @@ A slave is named by its bus position and product (`2_EL2004` for Beckhoff termin
 
 ### Auto-configure
 
-The config form's Auto-configure button asks each target in the form for its AMS NetId, or with none, finds TwinCAT routers on this machine and its network (UDP 48899 broadcast) and adds one target each on AMS port 851.
+The config form's Auto-configure button asks each target in the form for its AMS NetId, or with none, finds TwinCAT routers on this machine and its networks (UDP 48899 broadcast on every interface; a PLC behind a router or VPN needs its host entered) and adds one target each on AMS port 851.
 
 ## Symbol Map
 
