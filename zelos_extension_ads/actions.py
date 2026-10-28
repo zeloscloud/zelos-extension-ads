@@ -328,6 +328,7 @@ def _advanced_local_net_id() -> str:
     "and its network (UDP broadcast) and add one target each. Review, then save and start.",
     standalone=True,
     hidden=True,
+    read_only=True,
 )
 @zelos_sdk.action.object(
     "config",
