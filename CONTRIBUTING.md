@@ -33,6 +33,7 @@ The Zelos guide to [developing extensions](https://docs.zeloscloud.io/latest/sdk
 | `tests/test_symbols.py`              | Symbol tables, flattening, names, filters, values and the map                 |
 | `tests/test_client.py`               | The client against the demo PLC, in process and over AMS/TCP                  |
 | `tests/test_ethercat.py`             | EtherCAT trace and actions through the demo master                            |
+| `tests/test_action_flags.py`         | Each action's read-only and hidden flags                                      |
 | `tests/test_hil.py`                  | Tests against a real TwinCAT target                                           |
 | `tests/conftest.py`                  | The demo server fixture and the helpers that run a client                     |
 
