@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Needs Zelos 26.0.10 or later.
 - Zelos AI runs Auto-configure without asking first: it only sends a UDP identify.
+- Auto-configure always takes the settings form's data, which the form always sends; a call without it fails instead of reading the saved settings.
 
 ---
 

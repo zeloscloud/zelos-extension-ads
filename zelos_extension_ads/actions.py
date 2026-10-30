@@ -323,9 +323,9 @@ def _advanced_local_net_id() -> str:
 
 @zelos_sdk.action(
     "Auto-configure",
-    "Ask each target in the form for its AMS NetId (unsaved edits included; older apps: "
-    "the saved config) and fill it in. With none, find TwinCAT routers on this machine "
-    "and its network (UDP broadcast) and add one target each. Review, then save and start.",
+    "Ask each target in the form for its AMS NetId (unsaved edits included) and fill it "
+    "in. With none, find TwinCAT routers on this machine and its network (UDP broadcast) "
+    "and add one target each. Review, then save and start.",
     standalone=True,
     hidden=True,
     read_only=True,
@@ -334,15 +334,12 @@ def _advanced_local_net_id() -> str:
     "config",
     properties={},
     title="Config",
-    description="The config form's current (possibly unsaved) data. Empty: the saved config",
-    required=False,
+    description="The config form's current (possibly unsaved) data",
 )
-def auto_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
+def auto_config(config: dict[str, Any]) -> dict[str, Any]:
     """`config` keys replace the form's: only `targets`, so Advanced survives."""
     from zelos_extension_ads.autoconfig import check_targets, probe
 
-    if config is None:
-        config = _saved_config()
     targets = [t for t in config.get("targets") or [] if isinstance(t, dict)]
     return check_targets(targets) if targets else probe()
 
