@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI: app mode, `demo`, `demo-server`, `trace <host> [map]`.
 - EtherCAT diagnostics per target (`ethercat`, off by default): the TwinCAT EtherCAT master read through its own ADS device (AMS port 0xFFFF on `ethercat_ams_net_id`, default the first EtherCAT device the runtime's I/O server lists on AMS port 300) every `advanced.ethercat_interval` (1 s). `_ethercat` carries the master state, slave count and cyclic/acyclic frame and lost-frame counters; `_ethercat/<position>_<name>` each slave's AL state, link status, `lost`, per-port CRC counters and identity, on change and every `min_update_interval`. Names and fields follow the EtherCAT extension. Actions `ethercat_slaves` and `ethercat_read_sdo` (CoE upload on the slave's station-address port; a slave without a mailbox is a clear error), both read-only. `trace --ethercat` on the CLI; the demo PLC carries a four-terminal segment.
 
+### Changed
+- Needs Zelos 26.0.10 or later.
+- Zelos AI runs Auto-configure without asking first: it only sends a UDP identify.
+- Auto-configure always takes the settings form's data, which the form always sends; a call without it fails instead of reading the saved settings.
+
 ---
 
 *For maintainers: When releasing, move items from [Unreleased] to a new version section:*

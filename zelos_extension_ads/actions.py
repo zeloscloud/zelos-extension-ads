@@ -294,8 +294,7 @@ def add_route(
             "`adstool <host> addroute`; this action is for machines without one"
         )
     local_host = ams.outbound_ip(host)
-    # Running, the process presents one NetId: that is the one to route, whatever
-    # interface `host` sits on; stopped, derive it as the next start will.
+    # Running, route the one NetId the process presents; stopped, derive it as the next start will.
     net_id = ams.parse_net_id(
         local_ams_net_id or ams.local_net_id() or _advanced_local_net_id() or local_host + ".1.1"
     )
@@ -324,25 +323,23 @@ def _advanced_local_net_id() -> str:
 
 @zelos_sdk.action(
     "Auto-configure",
-    "Ask each target in the form for its AMS NetId (unsaved edits included; older apps: "
-    "the saved config) and fill it in. With none, find TwinCAT routers on this machine "
-    "and its network (UDP broadcast) and add one target each. Review, then save and start.",
+    "Ask each target in the form for its AMS NetId (unsaved edits included) and fill it "
+    "in. With none, find TwinCAT routers on this machine and its network (UDP broadcast) "
+    "and add one target each. Review, then save and start.",
     standalone=True,
     hidden=True,
+    read_only=True,
 )
 @zelos_sdk.action.object(
     "config",
     properties={},
     title="Config",
-    description="The config form's current (possibly unsaved) data. Empty: the saved config",
-    required=False,
+    description="The config form's current (possibly unsaved) data",
 )
-def auto_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
+def auto_config(config: dict[str, Any]) -> dict[str, Any]:
     """`config` keys replace the form's: only `targets`, so Advanced survives."""
     from zelos_extension_ads.autoconfig import check_targets, probe
 
-    if config is None:
-        config = _saved_config()
     targets = [t for t in config.get("targets") or [] if isinstance(t, dict)]
     return check_targets(targets) if targets else probe()
 

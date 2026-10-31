@@ -54,8 +54,7 @@ INT_RANGES = {
 BOOL_TRUE = frozenset({"true", "1", "on", "yes"})
 BOOL_FALSE = frozenset({"false", "0", "off", "no"})
 
-#: Symbols no one traces by default: TwinCAT's own GVLs and Beckhoff library globals.
-#: Globs over the symbol path, like `exclude`; `include` wins over these.
+#: Globs of TwinCAT's own GVLs and Beckhoff library globals, untraced unless `include` names them.
 SYSTEM_GLOBALS = (
     "TwinCAT_*.**",  # TwinCAT_SystemInfoVarList, TwinCAT_PreventOnlineChangeGvl
     "Constants.**",
@@ -65,8 +64,7 @@ SYSTEM_GLOBALS = (
     "Tc3_*.**",
 )
 
-#: The per-target health event. Sanitized map and symbol names never start
-#: with `_`, so neither can take it.
+#: The per-target health event; sanitized names never start with `_`, so none can take it.
 HEALTH_EVENT = "_target"
 
 _SYMBOL_HEADER = struct.Struct("<6I3H")  # entryLength, iGroup, iOffs, size, dataType, flags, 3 lens
