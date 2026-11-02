@@ -7,7 +7,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 keywords = ["zelos", "extension", "ads", "twincat", "beckhoff", "industrial", "plc"]
 dependencies = [
-    "zelos-sdk>=0.0.13a1",
+    "zelos-sdk>=0.0.13",
     # 3.6: prebuilt AdsLib, Beckhoff RT Linux detection; <3.7: PyadsLink.close uses pyads internals
     "pyads>=3.6,<3.7",
     "rich-click>=1.8.0",
