@@ -697,6 +697,9 @@ class ADSClient:
                 )
                 return [f for rest in blocks[i:] for f in rest.fields]
             self._handles[handle] = b
+            # TwinCAT sends the current value on subscribe: a sweep read before it would
+            # log a newer value ahead of that older sample.
+            self._seen[b] = time.monotonic()
         return []
 
     def _on_notification(self, block: Block, stamp_ns: int, data: bytes) -> None:
