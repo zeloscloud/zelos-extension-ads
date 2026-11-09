@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `add_route` derives the local NetId toward the host (or Advanced > Local AMS NetId) instead of reusing the running extension's: re-adding that NetId from another interface moved its existing route.
 - PLC state changes (RUN, STOP) are logged; a download is logged as "online change or download", not "online change".
 - No asyncio traceback when the extension is stopped during its first connect.
+- With EtherCAT diagnostics on, a dropped connection reconnects: it no longer fails with "Broken pipe" forever on the dead socket AdsLib kept routed to the master's NetId.
 
 ---
 

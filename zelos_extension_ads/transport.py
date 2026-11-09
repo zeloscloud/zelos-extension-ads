@@ -10,6 +10,7 @@ import contextlib
 import ctypes
 import logging
 import struct
+import threading
 from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Any, Protocol
@@ -59,6 +60,37 @@ class Link(Protocol):
     def read_port(self, ams_port: int, group: int, offset: int, size: int) -> bytes: ...
 
 
+# AdsLib (pyads 3.6, Beckhoff/ADS master) counts routes per TCP connection but erases a
+# NetId only when its own DelRoute takes that count to zero. Two NetIds on one host (the
+# runtime and the EtherCAT master) leave the first one mapped after both close, pinning
+# the dead socket: every reconnect reuses it and fails with "Broken pipe". Mirror the
+# count per host and drop the leftovers once it reaches zero.
+_routes_lock = threading.Lock()
+_routes: dict[str, tuple[int, dict[str, Any]]] = {}  # host -> (count, NetId -> SAmsNetId)
+
+
+def _route_added(host: str, net_id: str, net_id_struct: Any) -> None:
+    with _routes_lock:
+        count, nets = _routes.get(host, (0, {}))
+        _routes[host] = (count + 1, {**nets, net_id: net_id_struct})
+
+
+def _del_route(host: str, net_id: str, net_id_struct: Any) -> None:
+    with _routes_lock:
+        with contextlib.suppress(ADSError, OSError):
+            pyads_ex.adsDelRoute(net_id_struct)
+        count, nets = _routes.pop(host, (1, {}))
+        if count > 1:
+            _routes[host] = (count - 1, nets)
+            return
+        for stale, stale_struct in nets.items():
+            if stale != net_id:
+                # The connection still exists, so this adds no TCP connect: 1 -> 0 erases it.
+                with contextlib.suppress(ADSError, OSError):
+                    pyads_ex.adsAddRoute(stale_struct, host)
+                    pyads_ex.adsDelRoute(stale_struct)
+
+
 def filetime_ns(filetime: int) -> int:
     return (filetime - FILETIME_EPOCH) * 100
 
@@ -74,6 +106,8 @@ class PyadsLink:
     def open(self) -> None:
         plc = pyads.Connection(self.net_id, self.port, self.host)
         plc.open()
+        if ROUTERLESS:
+            _route_added(self.host, self.net_id, plc._adr.netIdStruct())
         plc.set_timeout(int(self.timeout * 1000))
         self._plc = plc
 
@@ -99,8 +133,7 @@ class PyadsLink:
         for handle in handles:
             pyads_ex.callback_store.pop((plc._adr, handle), None)
         if ROUTERLESS:
-            with contextlib.suppress(ADSError, OSError):
-                pyads_ex.adsDelRoute(plc._adr.netIdStruct())
+            _del_route(self.host, self.net_id, plc._adr.netIdStruct())
 
     def _require(self) -> pyads.Connection:
         if self._plc is None:

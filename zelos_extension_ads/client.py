@@ -1119,8 +1119,8 @@ class ADSClient:
         return sym.decode(raw, f.data_type)
 
     async def read_state(self) -> dict[str, Any]:
-        self.plc_state = await self._call(self._require_link().read_state)
-        state, device_state = self.plc_state
+        # Not stored: the health poll owns plc_state, so it sees and logs every change.
+        state, device_state = await self._call(self._require_link().read_state)
         return {
             "target": self.name,
             "ads_state": state,
