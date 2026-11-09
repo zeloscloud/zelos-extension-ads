@@ -5,7 +5,7 @@ author = "Zelos"
 repository = "https://github.com/zeloscloud/zelos-extension-ads"
 # At most 20 keywords and 10 categories. Marketplace search matches both, the name, description,
 # author and repository. Zelos AI sees the name, description and keywords, not the categories.
-keywords = ["ads", "twincat", "beckhoff", "industrial", "plc", "automation", "twincat 3", "twincat 2", "ams", "ams net id", "amsnetid", "symbol", "notification", "route", "adstool", "pyads", "plc variable", "ethercat diagnostics", "coe", "sdo"]
+keywords = ["ads", "twincat", "beckhoff", "industrial", "plc", "automation", "twincat 3", "ams", "ams net id", "amsnetid", "symbol", "notification", "route", "adstool", "pyads", "plc variable", "ethercat diagnostics", "coe", "sdo"]
 categories = ["Industrial", "IoT", "Protocol", "Diagnostics", "Networking"]
 icon = "assets/icon.png"
 readme = "README.md"

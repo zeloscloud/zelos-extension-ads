@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 PLC_PORT = 851
 ADS_TCP_PORT = 48898
+SECURE_ADS_TCP_PORT = 8016
 UDP_PORT = 48899
 SYSTEM_SERVICE_PORT = 10000
 
@@ -65,6 +66,26 @@ def outbound_ip(host: str) -> str:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.connect((host, ADS_TCP_PORT))
         return sock.getsockname()[0]
+
+
+def tcp_unreachable(host: str, timeout: float) -> str:
+    """Why plain ADS (TCP 48898) on `host` cannot be reached, "" when it can.
+
+    A dropped 48898 beside an open 8016 is Beckhoff RT Linux's default firewall."""
+    try:
+        socket.create_connection((host, ADS_TCP_PORT), timeout).close()
+        return ""
+    except OSError as e:
+        reason = str(e.strerror or e or type(e).__name__)
+    try:
+        socket.create_connection((host, SECURE_ADS_TCP_PORT), timeout).close()
+    except OSError:
+        return f"no TCP connection to {host}:{ADS_TCP_PORT} ({reason})"
+    return (
+        f"{host} accepts only Secure ADS (TCP {SECURE_ADS_TCP_PORT}), not TCP {ADS_TCP_PORT} "
+        f"({reason}): its firewall, Beckhoff RT Linux's default, must accept TCP {ADS_TCP_PORT} "
+        "from this machine"
+    )
 
 
 def native_router() -> bool:

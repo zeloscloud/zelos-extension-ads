@@ -13,7 +13,6 @@ import collections
 import contextlib
 import logging
 import signal
-import socket
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -425,14 +424,11 @@ class ADSClient:
 
     def _probe_tcp(self) -> None:
         """Worker thread: fail fast where AdsLib would wait minutes on a dropped SYN."""
-        try:
-            socket.create_connection((self.host, ams.ADS_TCP_PORT), self.timeout).close()
-        except OSError as e:
+        if reason := ams.tcp_unreachable(self.host, self.timeout):
             raise ConnectError(
-                f"no TCP connection to {self.host}:{ams.ADS_TCP_PORT} ({describe_error(e)})",
-                f"check that TwinCAT runs there and its firewall accepts TCP {ams.ADS_TCP_PORT} "
-                "(Beckhoff RT Linux allows only Secure ADS, TCP 8016, by default)",
-            ) from e
+                reason,
+                f"check that TwinCAT runs there and its firewall accepts TCP {ams.ADS_TCP_PORT}",
+            )
 
     def _discover_master(self, runtime: Link) -> str:
         """Worker thread: the first EtherCAT device's NetId, from the runtime's I/O server."""
