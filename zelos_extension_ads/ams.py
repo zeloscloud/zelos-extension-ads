@@ -14,6 +14,7 @@ Two platform modes, decided by pyads at import:
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import logging
 import socket
@@ -71,9 +72,19 @@ def outbound_ip(host: str) -> str:
 def tcp_unreachable(host: str, timeout: float) -> str:
     """Why plain ADS (TCP 48898) on `host` cannot be reached, "" when it can.
 
-    A dropped 48898 beside an open 8016 is Beckhoff RT Linux's default firewall."""
+    A dropped 48898 beside an open 8016 is Beckhoff RT Linux's default firewall. No probe
+    beside a live connection: TwinCAT may drop it when the same IP connects again."""
+    from zelos_extension_ads.transport import connected
+
+    if connected(host):
+        return ""
     try:
-        socket.create_connection((host, ADS_TCP_PORT), timeout).close()
+        with socket.create_connection((host, ADS_TCP_PORT), timeout) as probe:
+            # Until TwinCAT closes its end: a connection it still holds from this IP can
+            # cost the next one (the client's, ~1 ms later).
+            probe.shutdown(socket.SHUT_WR)
+            with contextlib.suppress(OSError):
+                probe.recv(1)
         return ""
     except OSError as e:
         reason = str(e.strerror or e or type(e).__name__)
