@@ -1,6 +1,6 @@
 # Zelos Beckhoff ADS
 
-A Zelos extension for Beckhoff TwinCAT ADS. Trace PLC variables from any TwinCAT 2 or 3 runtime by device notification or polling, and read, write and inspect symbols from the Zelos App. No TwinCAT function license needed: ADS is built into every runtime.
+A Zelos extension for Beckhoff TwinCAT ADS. Trace PLC variables from a TwinCAT 3 runtime by device notification or polling, and read, write and inspect symbols from the Zelos App. No TwinCAT function license needed: ADS is built into every runtime.
 
 ## Features
 
@@ -40,7 +40,7 @@ In the app:
 | Name | host | Trace name (`plc1`); unique |
 | Host | `localhost` | IP or host name of the TwinCAT router |
 | AMS NetId | | Target NetId (`5.1.2.3.1.1`); empty asks the host (UDP 48899) on every connect |
-| AMS Port | `851` | PLC runtime: 851 first TwinCAT 3 PLC, 852 second, 801 TwinCAT 2 |
+| AMS Port | `851` | PLC runtime: 851 first TwinCAT 3 PLC, 852 second (TwinCAT 2: 801, untested) |
 | Symbol Map File | | JSON [symbol map](#symbol-map); empty = [every variable](#every-variable) |
 | Cycle Time | `100` ms | Change check period (notification) or poll period |
 | Transport | `notification` | `notification` (PLC pushes changes) or `poll` |

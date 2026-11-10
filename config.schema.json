@@ -40,7 +40,7 @@
           "port": {
             "type": "integer",
             "title": "AMS Port",
-            "description": "The PLC runtime: 851 for the first TwinCAT 3 PLC, 852 for the second, 801 for TwinCAT 2.",
+            "description": "The PLC runtime: 851 for the first TwinCAT 3 PLC, 852 for the second; 801 for TwinCAT 2 (untested).",
             "default": 851,
             "minimum": 1,
             "maximum": 65535

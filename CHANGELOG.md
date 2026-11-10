@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PLC state changes (RUN, STOP) are logged; a download is logged as "online change or download", not "online change".
 - No asyncio traceback when the extension is stopped during its first connect.
 - With EtherCAT diagnostics on, a dropped connection reconnects: it no longer fails with "Broken pipe" forever on the dead socket AdsLib kept routed to the master's NetId.
+- Auto-configure checks TCP 48898 on each target it finds, and it and a failed connect name Beckhoff RT Linux's default firewall when Secure ADS (TCP 8016) answers but 48898 does not.
+- TwinCAT 2 (AMS port 801) is marked untested.
 
 ---
 

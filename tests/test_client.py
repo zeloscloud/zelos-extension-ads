@@ -9,6 +9,7 @@ import logging
 import struct
 import tomllib
 from pathlib import Path
+from unittest import mock
 
 import pytest
 import zelos_sdk
@@ -206,6 +207,7 @@ def test_auto_configure_without_the_form_checks_the_saved_targets(tmp_path, monk
         return [ams.Device("plc1", "5.1.2.3.1.1", "PLC1")]
 
     monkeypatch.setattr(ams, "identify", identify)
+    monkeypatch.setattr(ams, "tcp_unreachable", lambda host, timeout: "")
     registry = ActionsRegistry()
     actions.register_actions(registry)
     result = registry.execute("auto_config", {}).value
@@ -213,14 +215,23 @@ def test_auto_configure_without_the_form_checks_the_saved_targets(tmp_path, monk
     assert result["config"]["targets"][0]["ams_net_id"] == "5.1.2.3.1.1"
 
 
-def test_auto_config_resolves_a_host_name(monkeypatch):
-    """A router answers from its IP: a DNS name in the form must still match it."""
+def test_auto_config_resolves_a_host_name_and_names_the_firewall(monkeypatch):
+    """A router answers from its IP: a DNS name in the form must still match it. Plain ADS
+    dropped beside an open Secure ADS port is RT Linux's default firewall."""
     device = ams.Device(host="10.0.0.5", net_id="5.1.2.3.1.1", name="CX-1")
     monkeypatch.setattr(ams, "identify", lambda hosts, timeout: [device])
     monkeypatch.setattr(autoconfig.socket, "gethostbyname", lambda host: "10.0.0.5")
+
+    def connect(address, timeout):
+        if address == ("10.0.0.5", ams.ADS_TCP_PORT):
+            raise TimeoutError("timed out")
+        return mock.Mock()
+
+    monkeypatch.setattr(ams.socket, "create_connection", connect)
     result = autoconfig.check_targets([{"host": "plc.example"}])
     assert result["status"] == "success"
     assert result["config"]["targets"] == [{"host": "plc.example", "ams_net_id": "5.1.2.3.1.1"}]
+    assert "10.0.0.5 accepts only Secure ADS (TCP 8016), not TCP 48898" in result["message"]
 
 
 # ─── Over the wire: pyads -> AMS/TCP -> demo PLC ────────────────────────────

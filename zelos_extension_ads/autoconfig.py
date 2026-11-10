@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import socket
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from zelos_extension_ads import ams
@@ -19,6 +20,7 @@ from zelos_extension_ads.symbols import sanitize
 logger = logging.getLogger(__name__)
 
 IDENTIFY_SECONDS = 2.0
+TCP_SECONDS = 2.0
 
 
 def _entry(device: ams.Device, taken: set[str]) -> dict[str, Any]:
@@ -42,7 +44,7 @@ def check_targets(targets: list[dict[str, Any]]) -> dict[str, Any]:
     hosts = [str(t.get("host") or "localhost").strip() or "localhost" for t in targets]
     devices = {d.host: d for d in ams.identify(sorted(set(hosts)), IDENTIFY_SECONDS)}
     by_name = {d.name.lower(): d for d in devices.values() if d.name}
-    out, found, silent = [], [], []
+    out, found, silent, reached = [], [], [], []
     for entry, host in zip(targets, hosts, strict=True):
         entry = dict(entry)
         out.append(entry)
@@ -56,9 +58,10 @@ def check_targets(targets: list[dict[str, Any]]) -> dict[str, Any]:
             silent.append(f"{host} (answers as {device.net_id}, form says {entry['ams_net_id']})")
             continue
         found.append(_describe(device))
+        reached.append(device.host)
     notes = []
     if found:
-        notes.append(f"Found {'; '.join(found)}.")
+        notes += [f"Found {'; '.join(found)}.", *_tcp_notes(reached)]
     if silent:
         notes.append(
             f"No TwinCAT router answered at {', '.join(silent)} (UDP 48899): check the host, "
@@ -99,8 +102,22 @@ def probe() -> dict[str, Any]:
     taken: set[str] = set()
     targets = [_entry(d, taken) for d in devices]
     found = "; ".join(_describe(d) for d in devices)
-    message = f"Found {found}. Each is set to AMS port 851 (the first PLC)." + _route_note()
+    message = " ".join(
+        [
+            f"Found {found}. Each is set to AMS port 851 (the first PLC).",
+            *_tcp_notes([d.host for d in devices]),
+        ]
+    )
+    message += _route_note()
     return {"status": "success", "message": message, "config": {"targets": targets}}
+
+
+def _tcp_notes(hosts: list[str]) -> list[str]:
+    """One note per host whose plain ADS port (TCP 48898) does not answer."""
+    unique = list(dict.fromkeys(hosts))
+    with ThreadPoolExecutor(max(len(unique), 1)) as pool:
+        reasons = pool.map(lambda h: ams.tcp_unreachable(h, TCP_SECONDS), unique)
+    return [f"{reason[0].upper()}{reason[1:]}." for reason in reasons if reason]
 
 
 def _route_note() -> str:
