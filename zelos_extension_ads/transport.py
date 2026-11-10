@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import logging
+import socket
 import struct
 import threading
 from collections.abc import Callable, Sequence
@@ -75,6 +76,33 @@ def _route_added(host: str, net_id: str, net_id_struct: Any) -> None:
         _routes[host] = (count + 1, {**nets, net_id: net_id_struct})
 
 
+_opening: dict[str, threading.Lock] = {}
+
+
+def opening(host: str) -> threading.Lock:
+    """Held across one target's probe and connect: two targets on one host connecting at
+    once would each probe, and a probe can drop the other's fresh connection."""
+    with _routes_lock:
+        return _opening.setdefault(host, threading.Lock())
+
+
+def connected(host: str) -> bool:
+    """Whether this process holds a live AMS/TCP connection to `host`, by name or address."""
+    with _routes_lock:
+        hosts = list(_routes)
+    if host in hosts:
+        return True
+    address = _address(host)
+    return bool(address) and any(_address(h) == address for h in hosts)
+
+
+def _address(host: str) -> str:
+    try:
+        return socket.gethostbyname(host)
+    except OSError:
+        return ""
+
+
 def _del_route(host: str, net_id: str, net_id_struct: Any) -> None:
     with _routes_lock:
         with contextlib.suppress(ADSError, OSError):
@@ -106,10 +134,14 @@ class PyadsLink:
     def open(self) -> None:
         plc = pyads.Connection(self.net_id, self.port, self.host)
         plc.open()
+        self._plc = plc  # from here `close()` releases the port and the route
         if ROUTERLESS:
             _route_added(self.host, self.net_id, plc._adr.netIdStruct())
-        plc.set_timeout(int(self.timeout * 1000))
-        self._plc = plc
+        try:
+            plc.set_timeout(int(self.timeout * 1000))
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         """Close the port, then drop the route.

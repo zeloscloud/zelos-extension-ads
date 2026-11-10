@@ -13,12 +13,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
+import subprocess
 
 import pytest
+import zelos_sdk
 
 from tests.conftest import running, wait_until
 from zelos_extension_ads import actions
-from zelos_extension_ads.client import ADSClient
+from zelos_extension_ads.ams import ADS_TCP_PORT
+from zelos_extension_ads.cli.app import set_local_router
+from zelos_extension_ads.client import ADSClient, ADSRunner, SharedSource
 from zelos_extension_ads.ethercat import MASTER_EVENT
 from zelos_extension_ads.symbols import HEALTH_EVENT
 
@@ -90,3 +95,61 @@ async def test_bench_ethercat():
         except ValueError as e:
             assert "no CoE mailbox" in str(e)
     assert client.status()["errors"] == 0 and client.status()["ethercat_slaves"] >= 1
+
+
+def drop_ads_links() -> int:
+    """Shut down this process's AMS/TCP sockets, as a cable pull would end them. Found by
+    lsof: duplicating an arbitrary descriptor kills the process on macOS (guarded fds)."""
+    listing = subprocess.run(
+        ["lsof", "-a", "-n", "-P", "-p", str(os.getpid()), f"-iTCP:{ADS_TCP_PORT}", "-Ff"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    fds = [int(line[1:]) for line in listing.splitlines() if line[:1] == "f"]
+    for fd in fds:
+        with socket.socket(fileno=os.dup(fd)) as s:
+            s.shutdown(socket.SHUT_RDWR)
+    return len(fds)
+
+
+async def test_bench_reconnects_after_link_loss():
+    """Two NetIds (runtime + EtherCAT master) share one connection: every drop must let
+    the next connect open a fresh one, not reuse the dead socket."""
+    client = bench_client(ethercat=True)
+    async with running(client) as (_, rows):
+        await wait_until(lambda: client.status()["state"] == "ok", 20.0)
+        for _ in range(5):
+            errors = client.status()["errors"]
+            assert drop_ads_links() >= 1
+            # A reconnect can take 35 ms: the counted loss, not a state seen between polls.
+            await wait_until(lambda n=errors: client.status()["errors"] > n, 5.0)
+            await wait_until(lambda: client.status()["state"] == "ok", 20.0)
+            seen = len(rows.of("MAIN", "nCycle"))
+            await wait_until(lambda n=seen: len(rows.of("MAIN", "nCycle")) > n + 3, 5.0)
+
+
+async def test_bench_one_connection_per_host():
+    """TwinCAT drops a connection when the same IP opens another: a second target on the
+    host, and an auto-configure probe of it, must ride the live one."""
+    first = bench_client()
+    second = ADSClient(host=HOST, name="bench2", port=first.port, include=["MAIN.nCycle"])
+    set_local_router([first, second])
+    shared = SharedSource(zelos_sdk.TraceSource("ADS"))
+    first.start(shared)
+    second.start(shared)
+    runner = ADSRunner([first, second])
+    task = asyncio.create_task(runner._run_async())
+    try:
+        both = [first, second]
+        await wait_until(lambda: all(c.status()["state"] == "ok" for c in both), 20.0)
+        # TwinCAT 4026 dropped a connection some seconds old on every other probe.
+        await asyncio.sleep(10.0)
+        errors = [c.status()["errors"] for c in both]
+        for _ in range(4):
+            await asyncio.to_thread(actions.auto_config, {"targets": [{"name": "x", "host": HOST}]})
+            await asyncio.sleep(5.0)
+        assert [c.status()["errors"] for c in both] == errors
+        assert all(c.status()["state"] == "ok" for c in both)
+    finally:
+        runner.stop()
+        await asyncio.wait_for(task, 10.0)

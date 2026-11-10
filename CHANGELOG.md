@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zelos AI runs Auto-configure without asking first: it only sends a UDP identify.
 
 ### Fixed
+- Connecting no longer costs the connection TwinCAT gets next: the TCP 48898 check before a connect waits for TwinCAT to close its end, and is skipped beside a live connection to the host (TwinCAT can drop a connection when the same IP opens another). Two targets on one host connect one at a time. On a LAN, first contact failed about one start in three, and auto-configure dropped running targets on the host.
+- A link whose timeout cannot be set is closed, so its route does not leak.
 - A subscribed variable no longer logs a sweep read ahead of the first notification at connect: a counter stepped back one cycle, sometimes with an earlier timestamp, on every connect.
 - Auto-configure broadcasts on every IPv4 interface, not only the default route's: a PLC on a second interface (Wi-Fi plus Ethernet to the PLC) is found.
 - Auto-configure matches a target entered by host name to the router answering from its address, and says a route is needed.

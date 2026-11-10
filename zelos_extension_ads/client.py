@@ -35,6 +35,7 @@ from zelos_extension_ads.transport import (
     describe_error,
     is_connection_error,
     needs_resync,
+    opening,
 )
 
 logger = logging.getLogger(__name__)
@@ -403,14 +404,15 @@ class ADSClient:
                 "%s is %s (%s, TwinCAT %s)", self.host, net_id, device.name, device.version
             )
         self.net_id = net_id
-        if self._link_factory is None and not ams.native_router():
-            self._probe_tcp()
         link = (
             self._link_factory()
             if self._link_factory
             else PyadsLink(self.host, net_id, self.port, self.timeout)
         )
-        link.open()
+        with opening(self.host):
+            if self._link_factory is None and not ams.native_router():
+                self._probe_tcp()
+            link.open()
         try:
             self.plc_state = link.read_state()
             self.device = link.device_info()
